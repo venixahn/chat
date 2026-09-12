@@ -7,6 +7,9 @@ const signupForm = document.getElementById('signup-form');
 const tabBtns = document.querySelectorAll('.tab-btn');
 const loginError = document.getElementById('login-error');
 const signupError = document.getElementById('signup-error');
+const signupPassword = document.getElementById('signup-password');
+const strengthBar = document.querySelector('.strength-bar');
+const strengthText = document.querySelector('.strength-text');
 
 // Tab switching
 tabBtns.forEach(btn => {
@@ -116,6 +119,51 @@ signupForm.addEventListener('submit', async (e) => {
   } catch (error) {
     signupError.textContent = 'Network error. Please try again.';
     console.error('Signup error:', error);
+  }
+});
+
+// Password strength checker
+function checkPasswordStrength(password) {
+  let strength = 0;
+  
+  if (password.length >= 8) strength += 1;
+  if (password.length >= 12) strength += 1;
+  if (/[A-Z]/.test(password)) strength += 1;
+  if (/[a-z]/.test(password)) strength += 1;
+  if (/[0-9]/.test(password)) strength += 1;
+  if (/[^A-Za-z0-9]/.test(password)) strength += 1;
+  
+  return strength;
+}
+
+// Update password strength meter
+signupPassword.addEventListener('input', () => {
+  const password = signupPassword.value;
+  const strength = checkPasswordStrength(password);
+  
+  // Update strength bar
+  strengthBar.className = 'strength-bar';
+  strengthBar.style.width = `${(strength / 6) * 100}%`;
+  
+  // Update strength text and color
+  if (strength <= 2) {
+    strengthBar.classList.add('weak');
+    strengthText.textContent = 'Weak password';
+    strengthText.style.color = '#e74c3c';
+  } else if (strength <= 4) {
+    strengthBar.classList.add('medium');
+    strengthText.textContent = 'Medium password';
+    strengthText.style.color = '#f39c12';
+  } else {
+    strengthBar.classList.add('strong');
+    strengthText.textContent = 'Strong password';
+    strengthText.style.color = '#27ae60';
+  }
+  
+  if (password.length === 0) {
+    strengthBar.style.width = '0%';
+    strengthText.textContent = 'Password strength';
+    strengthText.style.color = '#666';
   }
 });
 
