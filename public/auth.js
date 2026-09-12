@@ -7,6 +7,8 @@ const tabBtns = document.querySelectorAll('.tab-btn');
 const loginError = document.getElementById('login-error');
 const signupError = document.getElementById('signup-error');
 const signupPassword = document.getElementById('signup-password');
+const signupConfirmPassword = document.getElementById('signup-confirm-password');
+const generatePasswordBtn = document.getElementById('generate-password');
 const signupUsername = document.getElementById('signup-username');
 const loginUsername = document.getElementById('login-username');
 const strengthBar = document.querySelector('.strength-bar');
@@ -188,6 +190,107 @@ signupForm.addEventListener('submit', async (e) => {
 });
 
 // Password strength checker
+function randomIndex(max, value) {
+  return value % max;
+}
+
+function generatePassword() {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%^&*';
+  const all = upper + lower + digits + symbols;
+  const bytes = new Uint32Array(16);
+  crypto.getRandomValues(bytes);
+
+  const chars = [
+    upper[randomIndex(upper.length, bytes[0])],
+    lower[randomIndex(lower.length, bytes[1])],
+    digits[randomIndex(digits.length, bytes[2])],
+    symbols[randomIndex(symbols.length, bytes[3])]
+  ];
+
+  for (let i = 4; i < bytes.length; i += 1) {
+    chars.push(all[randomIndex(all.length, bytes[i])]);
+  }
+
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = randomIndex(i + 1, bytes[i]);
+    const temp = chars[i];
+    chars[i] = chars[j];
+    chars[j] = temp;
+  }
+
+  return chars.join('');
+}
+
+function setPasswordVisibility(inputId, visible) {
+  const input = document.getElementById(inputId);
+  const button = document.querySelector(`.toggle-password[data-target="${inputId}"]`);
+  if (!input) return;
+  input.type = visible ? 'text' : 'password';
+  if (button) {
+    button.textContent = visible ? 'Hide' : 'Show';
+    button.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+  }
+}
+
+function updatePasswordStrength() {
+  const password = signupPassword.value;
+  const strength = checkPasswordStrength(password);
+
+  strengthBar.className = 'strength-bar';
+  strengthBar.style.width = `${(strength / 6) * 100}%`;
+
+  if (password.length === 0) {
+    strengthBar.style.width = '0%';
+    strengthText.textContent = 'Use 8+ characters with a letter and a number';
+    strengthText.style.color = '#666';
+    return;
+  }
+
+  if (strength <= 2) {
+    strengthBar.classList.add('weak');
+    strengthText.textContent = 'Weak password';
+    strengthText.style.color = '#e74c3c';
+  } else if (strength <= 4) {
+    strengthBar.classList.add('medium');
+    strengthText.textContent = 'Medium password';
+    strengthText.style.color = '#f39c12';
+  } else {
+    strengthBar.classList.add('strong');
+    strengthText.textContent = 'Strong password';
+    strengthText.style.color = '#27ae60';
+  }
+}
+
+async function copyGeneratedPassword(password) {
+  try {
+    await navigator.clipboard.writeText(password);
+    signupError.classList.remove('error');
+    signupError.classList.add('success');
+    signupError.textContent = 'Password generated and copied. Save it before you continue.';
+  } catch (error) {
+    signupError.classList.remove('error');
+    signupError.classList.add('success');
+    signupError.textContent = 'Password generated. Copy it now — it will be hidden if you leave this page.';
+  }
+}
+
+if (generatePasswordBtn) {
+  generatePasswordBtn.addEventListener('click', async () => {
+    const password = generatePassword();
+    signupPassword.value = password;
+    signupConfirmPassword.value = password;
+    setPasswordVisibility('signup-password', true);
+    setPasswordVisibility('signup-confirm-password', true);
+    updatePasswordStrength();
+    await copyGeneratedPassword(password);
+    signupPassword.focus();
+    signupPassword.select();
+  });
+}
+
 function checkPasswordStrength(password) {
   let strength = 0;
   
@@ -230,36 +333,7 @@ function validateSignupPassword(password) {
   return { valid: true };
 }
 
-// Update password strength meter
-signupPassword.addEventListener('input', () => {
-  const password = signupPassword.value;
-  const strength = checkPasswordStrength(password);
-  
-  // Update strength bar
-  strengthBar.className = 'strength-bar';
-  strengthBar.style.width = `${(strength / 6) * 100}%`;
-  
-  // Update strength text and color
-  if (strength <= 2) {
-    strengthBar.classList.add('weak');
-    strengthText.textContent = 'Weak password';
-    strengthText.style.color = '#e74c3c';
-  } else if (strength <= 4) {
-    strengthBar.classList.add('medium');
-    strengthText.textContent = 'Medium password';
-    strengthText.style.color = '#f39c12';
-  } else {
-    strengthBar.classList.add('strong');
-    strengthText.textContent = 'Strong password';
-    strengthText.style.color = '#27ae60';
-  }
-  
-  if (password.length === 0) {
-    strengthBar.style.width = '0%';
-    strengthText.textContent = 'Use 8+ characters with a letter and a number';
-    strengthText.style.color = '#666';
-  }
-});
+signupPassword.addEventListener('input', updatePasswordStrength);
 
 // Real-time username validation
 signupUsername.addEventListener('input', () => {

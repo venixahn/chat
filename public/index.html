@@ -38,7 +38,10 @@
                     <input type="text" id="signup-username" autocomplete="username" required>
                 </div>
                 <div class="form-group">
-                    <label for="signup-password">Password</label>
+                    <div class="form-group-label">
+                        <label for="signup-password">Password</label>
+                        <button type="button" id="generate-password" class="text-btn">Generate password</button>
+                    </div>
                     <div class="password-field">
                         <input type="password" id="signup-password" autocomplete="new-password" required minlength="8">
                         <button type="button" class="toggle-password" data-target="signup-password" aria-label="Show password">Show</button>

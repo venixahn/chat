@@ -83,6 +83,32 @@ body {
   font-size: 14px;
 }
 
+.form-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.form-group-label label {
+  margin-bottom: 0;
+}
+
+.text-btn {
+  border: none;
+  background: none;
+  color: #667eea;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.text-btn:hover {
+  color: #5568d3;
+}
+
 .form-group input {
   width: 100%;
   padding: 12px;
