@@ -13,8 +13,12 @@ const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const charCount = document.getElementById('char-count');
 const typingStatus = document.getElementById('typing-status');
+const connectionBanner = document.getElementById('connection-banner');
+const toastRegion = document.getElementById('toast-region');
 
 const MAX_MESSAGE_LENGTH = 5000;
+const CHAR_COUNT_REVEAL_AT = 4000;
+const COMPOSER_MAX_HEIGHT = 120;
 
 let currentChatUser = null;
 let username = localStorage.getItem('username');
@@ -28,10 +32,34 @@ let onlineUsers = new Set();
 let shuttingDown = false;
 let typingThrottle = null;
 let hideTypingTimer = null;
+let toastTimer = null;
 
 function clearSessionStorage() {
   localStorage.removeItem('token');
   localStorage.removeItem('username');
+}
+
+function showToast(message, tone = 'info') {
+  if (!toastRegion) return;
+  toastRegion.textContent = message;
+  toastRegion.className = `toast-region toast-visible toast-${tone}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastRegion.classList.remove('toast-visible');
+  }, 4000);
+}
+
+function setConnectionState(state) {
+  if (!connectionBanner) return;
+
+  if (state === 'open') {
+    connectionBanner.classList.add('hidden');
+    connectionBanner.textContent = '';
+    return;
+  }
+
+  connectionBanner.classList.remove('hidden');
+  connectionBanner.textContent = state === 'offline' ? 'Offline. Trying to reconnect…' : 'Reconnecting…';
 }
 
 async function apiFetch(path, options = {}) {
@@ -64,8 +92,10 @@ function handleSessionExpiry() {
   clearInterval(fallbackPoll);
 
   clearSessionStorage();
-  alert('Your session has expired. Please login again.');
-  window.location.href = '/index.html';
+  showToast('Your session expired. Redirecting to login…', 'error');
+  setTimeout(() => {
+    window.location.href = '/index.html';
+  }, 1200);
 }
 
 function escapeHtml(text) {
@@ -79,6 +109,23 @@ function formatTime(timestamp) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function formatListTime(timestamp) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return formatTime(timestamp);
+  }
+
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  }
+
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function formatDay(timestamp) {
@@ -106,8 +153,34 @@ function previewText(content) {
   return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 }
 
+function initialsFor(name) {
+  const clean = (name || '').trim();
+  if (!clean) return '?';
+  const parts = clean.split(/[_\s]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
+}
+
+function avatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 52%, 46%)`;
+}
+
 function setThreadOpen(open) {
   chatContainer.classList.toggle('thread-open', open);
+}
+
+function resizeComposer() {
+  messageInput.style.height = 'auto';
+  const next = Math.min(messageInput.scrollHeight, COMPOSER_MAX_HEIGHT);
+  messageInput.style.height = `${next}px`;
+  messageInput.style.overflowY = messageInput.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
 }
 
 function closeThread({ fromHistory = false } = {}) {
@@ -117,6 +190,9 @@ function closeThread({ fromHistory = false } = {}) {
   messageInput.disabled = true;
   sendBtn.disabled = true;
   typingStatus.textContent = '';
+  messageInput.value = '';
+  resizeComposer();
+  updateCharCount();
   messagesContainer.innerHTML = `
     <div class="no-chat-selected">
       <p>Select a user from the sidebar to start chatting</p>
@@ -127,6 +203,7 @@ function closeThread({ fromHistory = false } = {}) {
   lastRenderedDate = null;
   document.querySelectorAll('.user-item').forEach((item) => {
     item.classList.remove('active');
+    item.setAttribute('aria-pressed', 'false');
   });
   if (!fromHistory && window.location.hash) {
     history.pushState({ chat: null }, '', window.location.pathname);
@@ -199,9 +276,13 @@ userSearch.addEventListener('input', applyUserFilter);
 function syncUserItem(item, user) {
   const nameEl = item.querySelector('.user-name');
   const previewEl = item.querySelector('.user-preview');
+  const timeEl = item.querySelector('.user-time');
   const badge = item.querySelector('.unread-badge');
+  const avatar = item.querySelector('.user-avatar');
 
   nameEl.textContent = user.username;
+  avatar.textContent = initialsFor(user.username);
+  avatar.style.background = avatarColor(user.username);
   item.classList.toggle('active', user.username === currentChatUser);
   item.classList.toggle('online', onlineUsers.has(user.username));
   item.setAttribute('aria-pressed', user.username === currentChatUser ? 'true' : 'false');
@@ -210,13 +291,17 @@ function syncUserItem(item, user) {
     const prefix = user.lastMessage.sender === username ? 'You: ' : '';
     previewEl.textContent = prefix + previewText(user.lastMessage.content);
     previewEl.classList.remove('hidden');
+    timeEl.textContent = formatListTime(user.lastMessage.timestamp);
   } else {
-    previewEl.textContent = '';
-    previewEl.classList.add('hidden');
+    previewEl.textContent = 'No messages yet';
+    previewEl.classList.remove('hidden');
+    timeEl.textContent = '';
   }
 
   const count = user.unread || 0;
-  if (count > 0 && user.username !== currentChatUser) {
+  const unread = count > 0 && user.username !== currentChatUser;
+  item.classList.toggle('unread', unread);
+  if (unread) {
     badge.textContent = count;
     badge.classList.remove('hidden');
   } else {
@@ -232,11 +317,17 @@ function createUserItem(user) {
   userItem.setAttribute('role', 'button');
   userItem.setAttribute('aria-pressed', 'false');
   userItem.innerHTML = `
+    <div class="user-avatar" aria-hidden="true"></div>
     <div class="user-copy">
-      <span class="user-name"></span>
-      <span class="user-preview hidden"></span>
+      <div class="user-row-top">
+        <span class="user-name"></span>
+        <span class="user-time"></span>
+      </div>
+      <div class="user-row-bottom">
+        <span class="user-preview hidden"></span>
+        <span class="unread-badge hidden">0</span>
+      </div>
     </div>
-    <span class="unread-badge hidden">0</span>
   `;
   syncUserItem(userItem, user);
 
@@ -317,6 +408,18 @@ function appendDateSeparator(timestamp) {
   messagesContainer.appendChild(separator);
 }
 
+function markMessageFailed(el, content, recipient) {
+  el.classList.remove('pending');
+  el.classList.add('failed');
+  el.dataset.content = content;
+  el.dataset.recipient = recipient;
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.title = 'Tap to retry';
+  const time = el.querySelector('.message-time');
+  if (time) time.textContent = 'Failed · tap to retry';
+}
+
 function createMessageEl(msg) {
   const messageDiv = document.createElement('div');
   const classes = ['message', msg.sender === username ? 'sent' : 'received'];
@@ -330,6 +433,11 @@ function createMessageEl(msg) {
       <span class="message-time">${msg.pending ? 'Sending…' : escapeHtml(formatTime(msg.timestamp))}</span>
     </div>
   `;
+
+  if (msg.failed) {
+    markMessageFailed(messageDiv, msg.content, msg.recipient);
+  }
+
   return messageDiv;
 }
 
@@ -419,11 +527,13 @@ function selectUser(user, { fromHistory = false } = {}) {
   messageInput.disabled = false;
   sendBtn.disabled = false;
   typingStatus.textContent = '';
+  resizeComposer();
   messageInput.focus();
 
   document.querySelectorAll('.user-item').forEach((item) => {
     const active = item.dataset.username === user;
     item.classList.toggle('active', active);
+    item.classList.toggle('unread', false);
     item.setAttribute('aria-pressed', active ? 'true' : 'false');
     if (active) {
       const badge = item.querySelector('.unread-badge');
@@ -442,7 +552,9 @@ function selectUser(user, { fromHistory = false } = {}) {
 function updateCharCount() {
   if (!charCount) return;
   const length = messageInput.value.length;
-  charCount.textContent = length ? `${length} / ${MAX_MESSAGE_LENGTH}` : '';
+  const show = length >= CHAR_COUNT_REVEAL_AT;
+  charCount.classList.toggle('hidden', !show);
+  charCount.textContent = show ? `${length} / ${MAX_MESSAGE_LENGTH}` : '';
   charCount.classList.toggle('over-limit', length > MAX_MESSAGE_LENGTH);
   messageInput.classList.toggle('invalid', length > MAX_MESSAGE_LENGTH);
 }
@@ -470,23 +582,29 @@ function updateLocalPreview(content) {
   const item = document.querySelector(`[data-username="${currentChatUser}"]`);
   if (!item) return;
   const previewEl = item.querySelector('.user-preview');
+  const timeEl = item.querySelector('.user-time');
   previewEl.textContent = `You: ${previewText(content)}`;
   previewEl.classList.remove('hidden');
+  if (timeEl) timeEl.textContent = formatListTime(new Date().toISOString());
   usersList.prepend(item);
 }
 
-messageForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-
-  const content = messageInput.value.trim();
-  if (!content || !currentChatUser) return;
+async function sendMessage(content, recipient, { replaceFailedId } = {}) {
+  if (!content || !recipient) return;
 
   if (content.length > MAX_MESSAGE_LENGTH) {
-    alert('Message must be less than 5000 characters');
+    showToast('Message must be less than 5000 characters', 'error');
     return;
   }
 
-  const recipient = currentChatUser;
+  if (replaceFailedId) {
+    const failed = document.querySelector(`[data-message-id="${replaceFailedId}"]`);
+    if (failed) {
+      renderedMessageIds.delete(replaceFailedId);
+      failed.remove();
+    }
+  }
+
   const tempId = `temp-${crypto.randomUUID()}`;
   const optimistic = {
     id: tempId,
@@ -497,10 +615,12 @@ messageForm.addEventListener('submit', async (event) => {
     pending: true
   };
 
-  messageInput.value = '';
-  updateCharCount();
-  renderMessages([optimistic]);
-  updateLocalPreview(content);
+  if (recipient === currentChatUser) {
+    renderMessages([optimistic]);
+  }
+  if (recipient === currentChatUser) {
+    updateLocalPreview(content);
+  }
 
   try {
     const response = await apiFetch('/messages', {
@@ -513,7 +633,7 @@ messageForm.addEventListener('submit', async (event) => {
       throw new Error(data.error || 'Failed to send message');
     }
 
-    if (data.data) {
+    if (data.data && recipient === currentChatUser) {
       renderMessages([data.data]);
     }
     loadUsers();
@@ -522,22 +642,54 @@ messageForm.addEventListener('submit', async (event) => {
 
     const pending = document.querySelector(`[data-message-id="${tempId}"]`);
     if (pending) {
-      pending.classList.remove('pending');
-      pending.classList.add('failed');
-      const time = pending.querySelector('.message-time');
-      if (time) time.textContent = 'Failed';
+      markMessageFailed(pending, content, recipient);
     }
 
-    messageInput.value = content;
-    updateCharCount();
     console.error('Error sending message:', error);
-    alert('Failed to send message: ' + (error.message || 'Unknown error'));
+    showToast(error.message || 'Failed to send message', 'error');
+  }
+}
+
+messageForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const content = messageInput.value.trim();
+  if (!content || !currentChatUser) return;
+
+  messageInput.value = '';
+  resizeComposer();
+  updateCharCount();
+  sendMessage(content, currentChatUser);
+});
+
+messageInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    messageForm.requestSubmit();
   }
 });
 
 messageInput.addEventListener('input', () => {
+  resizeComposer();
   updateCharCount();
   sendTypingNotice();
+});
+
+messagesContainer.addEventListener('click', (event) => {
+  const failed = event.target.closest('.message.failed');
+  if (!failed) return;
+  sendMessage(failed.dataset.content, failed.dataset.recipient, {
+    replaceFailedId: failed.dataset.messageId
+  });
+});
+
+messagesContainer.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const failed = event.target.closest('.message.failed');
+  if (!failed) return;
+  event.preventDefault();
+  sendMessage(failed.dataset.content, failed.dataset.recipient, {
+    replaceFailedId: failed.dataset.messageId
+  });
 });
 
 function handleSocketMessage(payload) {
@@ -584,6 +736,7 @@ function connectSocket() {
   socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
   socket.addEventListener('open', () => {
+    setConnectionState('open');
     clearInterval(fallbackPoll);
     fallbackPoll = null;
   });
@@ -603,6 +756,7 @@ function connectSocket() {
       handleSessionExpiry();
       return;
     }
+    setConnectionState(navigator.onLine ? 'reconnecting' : 'offline');
     if (!fallbackPoll) {
       fallbackPoll = setInterval(() => {
         loadUsers();
@@ -614,6 +768,16 @@ function connectSocket() {
     reconnectTimer = setTimeout(connectSocket, 3000);
   });
 }
+
+window.addEventListener('offline', () => {
+  setConnectionState('offline');
+});
+
+window.addEventListener('online', () => {
+  if (!socket || socket.readyState !== 1) {
+    setConnectionState('reconnecting');
+  }
+});
 
 async function init() {
   try {

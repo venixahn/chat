@@ -8,6 +8,7 @@
 </head>
 <body>
     <div class="chat-container" id="chat-container">
+        <div id="connection-banner" class="connection-banner hidden" role="status">Reconnecting…</div>
         <div class="sidebar">
             <div class="sidebar-header">
                 <h2>Chat App</h2>
@@ -38,13 +39,14 @@
                 <p id="typing-status" class="typing-status" aria-live="polite"></p>
                 <form id="message-form">
                     <label class="visually-hidden" for="message-input">Message</label>
-                    <input type="text" id="message-input" placeholder="Type a message..." maxlength="5000" disabled>
+                    <textarea id="message-input" placeholder="Type a message…" maxlength="5000" rows="1" disabled></textarea>
                     <button type="submit" class="btn" id="send-btn" disabled>Send</button>
                 </form>
-                <span id="char-count" class="char-count"></span>
+                <span id="char-count" class="char-count hidden"></span>
             </div>
         </div>
     </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
     
     <script src="chat.js"></script>
 </body>
