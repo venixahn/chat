@@ -6,7 +6,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #eef1f6;
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -97,6 +97,28 @@ body {
   border-color: #667eea;
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 68px;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: #667eea;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
 .password-strength {
   margin-top: 8px;
 }
@@ -136,23 +158,23 @@ body {
 .btn {
   width: 100%;
   padding: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
   border: none;
   border-radius: 8px;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: background 0.2s;
 }
 
 .btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+  background: #5568d3;
 }
 
-.btn:active {
-  transform: translateY(0);
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .btn-small {
@@ -254,7 +276,7 @@ body {
 
 .sidebar-header {
   padding: 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
 }
 
@@ -434,17 +456,64 @@ body {
   display: none;
 }
 
-.no-users {
-  color: #999;
-  font-style: italic;
+.no-users,
+.empty-state {
+  color: #666;
   text-align: center;
-  padding: 20px;
+  padding: 24px 20px;
+  line-height: 1.5;
+}
+
+.empty-title {
+  font-style: normal;
+  font-weight: 650;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.no-chat-selected,
+.no-messages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-style: normal;
 }
 
 .chat-area {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+}
+
+.thread-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.jump-latest {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  border: none;
+  background: #667eea;
+  color: white;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.jump-latest.hidden {
+  display: none;
 }
 
 .chat-header {
@@ -506,6 +575,16 @@ body {
   font-style: italic;
 }
 
+.composer-hint {
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #7a4b00;
+}
+
+.composer-hint.hidden {
+  display: none;
+}
+
 .message.pending {
   opacity: 0.7;
 }
@@ -530,19 +609,14 @@ body {
   background: #fafafa;
 }
 
-.no-chat-selected,
-.no-messages {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #999;
-  font-style: italic;
+.message {
+  margin-bottom: 10px;
+  max-width: 70%;
 }
 
-.message {
-  margin-bottom: 15px;
-  max-width: 70%;
+.message.grouped {
+  margin-top: -4px;
+  margin-bottom: 2px;
 }
 
 .message.sent {
@@ -560,9 +634,13 @@ body {
 }
 
 .message.sent .message-content {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
   border-bottom-right-radius: 4px;
+}
+
+.message.sent.grouped:not(.group-end) .message-content {
+  border-bottom-right-radius: 12px;
 }
 
 .message.received .message-content {
@@ -573,14 +651,34 @@ body {
 }
 
 .message-content p {
-  margin-bottom: 5px;
+  margin-bottom: 0;
   word-wrap: break-word;
   white-space: pre-wrap;
 }
 
 .message-time {
+  display: block;
   font-size: 11px;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity 0.15s, max-height 0.15s, margin 0.15s;
+}
+
+.message.group-end .message-content p,
+.message:hover .message-content p,
+.message:focus-within .message-content p {
+  margin-bottom: 5px;
+}
+
+.message.group-end .message-time,
+.message:hover .message-time,
+.message:focus-within .message-time,
+.message.failed .message-time,
+.message.pending .message-time {
   opacity: 0.7;
+  max-height: 20px;
+  margin-top: 4px;
 }
 
 .message-input {
@@ -640,19 +738,18 @@ body {
   width: auto;
   flex-shrink: 0;
   padding: 12px 24px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
   border: none;
   border-radius: 25px;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: background 0.2s;
 }
 
 .message-input button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+  background: #5568d3;
 }
 
 .message-input button:disabled {

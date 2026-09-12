@@ -11,6 +11,37 @@ const signupUsername = document.getElementById('signup-username');
 const loginUsername = document.getElementById('login-username');
 const strengthBar = document.querySelector('.strength-bar');
 const strengthText = document.querySelector('.strength-text');
+const loginSubmit = document.getElementById('login-submit');
+const signupSubmit = document.getElementById('signup-submit');
+
+document.querySelectorAll('.toggle-password').forEach((button) => {
+  button.addEventListener('click', () => {
+    const input = document.getElementById(button.dataset.target);
+    if (!input) return;
+    const hidden = input.type === 'password';
+    input.type = hidden ? 'text' : 'password';
+    button.textContent = hidden ? 'Hide' : 'Show';
+    button.setAttribute('aria-label', hidden ? 'Hide password' : 'Show password');
+  });
+});
+
+function showLoginTab(successMessage) {
+  tabBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'login'));
+  loginForm.classList.remove('hidden');
+  signupForm.classList.add('hidden');
+  signupError.textContent = '';
+  signupError.classList.remove('success');
+  signupError.classList.add('error');
+  if (successMessage) {
+    loginError.classList.remove('error');
+    loginError.classList.add('success');
+    loginError.textContent = successMessage;
+  } else {
+    loginError.classList.remove('success');
+    loginError.classList.add('error');
+    loginError.textContent = '';
+  }
+}
 
 // Tab switching
 tabBtns.forEach(btn => {
@@ -29,10 +60,13 @@ tabBtns.forEach(btn => {
       loginForm.classList.add('hidden');
       signupForm.classList.remove('hidden');
     }
-    
-    // Clear errors
+
     loginError.textContent = '';
+    loginError.classList.remove('success');
+    loginError.classList.add('error');
     signupError.textContent = '';
+    signupError.classList.remove('success');
+    signupError.classList.add('error');
   });
 });
 
@@ -54,6 +88,9 @@ loginForm.addEventListener('submit', async (e) => {
     return;
   }
   
+  loginSubmit.disabled = true;
+  loginSubmit.textContent = 'Logging in…';
+
   try {
     const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
@@ -71,11 +108,18 @@ loginForm.addEventListener('submit', async (e) => {
       localStorage.setItem('username', data.username);
       window.location.href = '/chat.html';
     } else {
+      loginError.classList.remove('success');
+      loginError.classList.add('error');
       loginError.textContent = data.error || 'Login failed';
     }
   } catch (error) {
+    loginError.classList.remove('success');
+    loginError.classList.add('error');
     loginError.textContent = 'Network error. Please try again.';
     console.error('Login error:', error);
+  } finally {
+    loginSubmit.disabled = false;
+    loginSubmit.textContent = 'Login';
   }
 });
 
@@ -106,6 +150,9 @@ signupForm.addEventListener('submit', async (e) => {
     return;
   }
   
+  signupSubmit.disabled = true;
+  signupSubmit.textContent = 'Creating account…';
+
   try {
     const response = await fetch(`${API_URL}/signup`, {
       method: 'POST',
@@ -119,30 +166,24 @@ signupForm.addEventListener('submit', async (e) => {
     const data = await response.json();
     
     if (response.ok) {
-      // Switch to login tab and show success message
-      signupError.textContent = '';
-      signupError.classList.remove('error');
-      signupError.classList.add('success');
-      signupError.textContent = 'Account created! Please login.';
-      
-      // Clear form
       document.getElementById('signup-username').value = '';
       document.getElementById('signup-password').value = '';
       document.getElementById('signup-confirm-password').value = '';
-      
-      // Switch to login tab after a delay
-      setTimeout(() => {
-        document.querySelector('[data-tab="login"]').click();
-        signupError.textContent = '';
-        signupError.classList.remove('success');
-        signupError.classList.add('error');
-      }, 2000);
+      document.getElementById('login-username').value = username;
+      showLoginTab('Account created. Log in to start chatting.');
     } else {
+      signupError.classList.remove('success');
+      signupError.classList.add('error');
       signupError.textContent = data.error || 'Signup failed';
     }
   } catch (error) {
+    signupError.classList.remove('success');
+    signupError.classList.add('error');
     signupError.textContent = 'Network error. Please try again.';
     console.error('Signup error:', error);
+  } finally {
+    signupSubmit.disabled = false;
+    signupSubmit.textContent = 'Sign Up';
   }
 });
 

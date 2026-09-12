@@ -30,13 +30,18 @@
                 <button type="button" id="back-btn" class="back-btn" aria-label="Back to conversations">Back</button>
                 <h3 id="chat-with-user">Select a user to chat</h3>
             </div>
-            <div class="messages-container" id="messages-container" aria-live="polite">
-                <div class="no-chat-selected">
-                    <p>Select a user from the sidebar to start chatting</p>
+            <div class="thread-body">
+                <div class="messages-container" id="messages-container" aria-live="polite">
+                    <div class="empty-state no-chat-selected">
+                        <p class="empty-title">Pick a conversation</p>
+                        <p>Choose someone in the list to start chatting. New accounts show up here after they sign up.</p>
+                    </div>
                 </div>
+                <button type="button" id="jump-latest" class="jump-latest hidden">1 new message</button>
             </div>
             <div class="message-input">
                 <p id="typing-status" class="typing-status" aria-live="polite"></p>
+                <p id="composer-hint" class="composer-hint hidden"></p>
                 <form id="message-form">
                     <label class="visually-hidden" for="message-input">Message</label>
                     <textarea id="message-input" placeholder="Type a message…" maxlength="5000" rows="1" disabled></textarea>

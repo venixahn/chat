@@ -15,10 +15,14 @@ const charCount = document.getElementById('char-count');
 const typingStatus = document.getElementById('typing-status');
 const connectionBanner = document.getElementById('connection-banner');
 const toastRegion = document.getElementById('toast-region');
+const jumpLatest = document.getElementById('jump-latest');
+const composerHint = document.getElementById('composer-hint');
 
 const MAX_MESSAGE_LENGTH = 5000;
 const CHAR_COUNT_REVEAL_AT = 4000;
 const COMPOSER_MAX_HEIGHT = 120;
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+const BASE_TITLE = 'Chat - Chat App';
 
 let currentChatUser = null;
 let username = localStorage.getItem('username');
@@ -28,11 +32,16 @@ let fallbackPoll = null;
 let renderedMessageIds = new Set();
 let renderedForUser = null;
 let lastRenderedDate = null;
+let lastRenderedSender = null;
+let lastRenderedTimestamp = null;
 let onlineUsers = new Set();
 let shuttingDown = false;
 let typingThrottle = null;
 let hideTypingTimer = null;
 let toastTimer = null;
+let hiddenIncoming = 0;
+let backgroundUnread = 0;
+let notificationAsked = false;
 
 function clearSessionStorage() {
   localStorage.removeItem('token');
@@ -50,16 +59,31 @@ function showToast(message, tone = 'info') {
 }
 
 function setConnectionState(state) {
-  if (!connectionBanner) return;
-
-  if (state === 'open') {
-    connectionBanner.classList.add('hidden');
-    connectionBanner.textContent = '';
-    return;
+  if (connectionBanner) {
+    if (state === 'open') {
+      connectionBanner.classList.add('hidden');
+      connectionBanner.textContent = '';
+    } else {
+      connectionBanner.classList.remove('hidden');
+      connectionBanner.textContent = state === 'offline'
+        ? 'Offline. Trying to reconnect…'
+        : 'Reconnecting…';
+    }
   }
 
-  connectionBanner.classList.remove('hidden');
-  connectionBanner.textContent = state === 'offline' ? 'Offline. Trying to reconnect…' : 'Reconnecting…';
+  if (composerHint) {
+    if (state === 'open') {
+      composerHint.textContent = '';
+      composerHint.classList.add('hidden');
+    } else {
+      composerHint.classList.remove('hidden');
+      composerHint.textContent = state === 'offline'
+        ? "You're offline. You can still type; sending may fail until you're back."
+        : 'Reconnecting… incoming messages may be delayed.';
+    }
+  }
+
+  chatContainer.classList.toggle('disconnected', state !== 'open');
 }
 
 async function apiFetch(path, options = {}) {
@@ -176,6 +200,82 @@ function setThreadOpen(open) {
   chatContainer.classList.toggle('thread-open', open);
 }
 
+function emptyChatSelectedHtml() {
+  return `
+    <div class="empty-state no-chat-selected">
+      <p class="empty-title">Pick a conversation</p>
+      <p>Choose someone in the list to start chatting. New accounts show up here after they sign up.</p>
+    </div>
+  `;
+}
+
+function emptyNoMessagesHtml(user) {
+  return `
+    <div class="empty-state no-messages">
+      <p class="empty-title">No messages yet</p>
+      <p>Say hello to ${escapeHtml(user)}. Enter sends, Shift+Enter starts a new line.</p>
+    </div>
+  `;
+}
+
+function emptyNoUsersHtml() {
+  return `
+    <div class="empty-state no-users">
+      <p class="empty-title">You're the only one here</p>
+      <p>Open this app in another browser and create a second account, or ask a friend to sign up.</p>
+    </div>
+  `;
+}
+
+function isNearBottom() {
+  return messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 80;
+}
+
+function hideJumpLatest() {
+  hiddenIncoming = 0;
+  if (jumpLatest) jumpLatest.classList.add('hidden');
+}
+
+function showJumpLatest() {
+  hiddenIncoming += 1;
+  if (!jumpLatest) return;
+  jumpLatest.textContent = hiddenIncoming === 1 ? '1 new message' : `${hiddenIncoming} new messages`;
+  jumpLatest.classList.remove('hidden');
+}
+
+function scrollToLatest() {
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  hideJumpLatest();
+}
+
+function updateTitleCount() {
+  document.title = document.hidden && backgroundUnread > 0
+    ? `(${backgroundUnread}) ${BASE_TITLE}`
+    : BASE_TITLE;
+}
+
+function notifyIncoming(msg) {
+  if (!msg || msg.sender === username || !document.hidden) return;
+
+  backgroundUnread += 1;
+  updateTitleCount();
+
+  if (!('Notification' in window)) return;
+
+  if (Notification.permission === 'granted') {
+    new Notification(msg.sender, {
+      body: previewText(msg.content),
+      tag: 'chat-incoming'
+    });
+    return;
+  }
+
+  if (Notification.permission === 'default' && !notificationAsked) {
+    notificationAsked = true;
+    Notification.requestPermission();
+  }
+}
+
 function resizeComposer() {
   messageInput.style.height = 'auto';
   const next = Math.min(messageInput.scrollHeight, COMPOSER_MAX_HEIGHT);
@@ -193,14 +293,13 @@ function closeThread({ fromHistory = false } = {}) {
   messageInput.value = '';
   resizeComposer();
   updateCharCount();
-  messagesContainer.innerHTML = `
-    <div class="no-chat-selected">
-      <p>Select a user from the sidebar to start chatting</p>
-    </div>
-  `;
+  messagesContainer.innerHTML = emptyChatSelectedHtml();
   renderedMessageIds = new Set();
   renderedForUser = null;
   lastRenderedDate = null;
+  lastRenderedSender = null;
+  lastRenderedTimestamp = null;
+  hideJumpLatest();
   document.querySelectorAll('.user-item').forEach((item) => {
     item.classList.remove('active');
     item.setAttribute('aria-pressed', 'false');
@@ -259,7 +358,7 @@ function applyUserFilter() {
 
   if (!hasUsers) {
     if (!existingEmpty) {
-      usersList.insertAdjacentHTML('beforeend', '<p class="no-users">No other users registered</p>');
+      usersList.insertAdjacentHTML('beforeend', emptyNoUsersHtml());
     }
     return;
   }
@@ -353,7 +452,7 @@ function renderUsers(users) {
 
   if (!users.length) {
     usersList.querySelectorAll('.user-item').forEach((item) => item.remove());
-    usersList.innerHTML = '<p class="no-users">No other users registered</p>';
+    usersList.innerHTML = emptyNoUsersHtml();
     return;
   }
 
@@ -420,6 +519,27 @@ function markMessageFailed(el, content, recipient) {
   if (time) time.textContent = 'Failed · tap to retry';
 }
 
+function applyGrouping(el, msg) {
+  const ts = new Date(msg.timestamp).getTime();
+  const grouped = lastRenderedSender === msg.sender
+    && lastRenderedDate === dayKey(msg.timestamp)
+    && lastRenderedTimestamp
+    && ts - lastRenderedTimestamp < GROUP_WINDOW_MS;
+
+  if (grouped) {
+    el.classList.add('grouped');
+    const messages = messagesContainer.querySelectorAll('.message');
+    const previous = messages[messages.length - 2];
+    if (previous) {
+      previous.classList.remove('group-end');
+    }
+  }
+
+  el.classList.add('group-end');
+  lastRenderedSender = msg.sender;
+  lastRenderedTimestamp = ts;
+}
+
 function createMessageEl(msg) {
   const messageDiv = document.createElement('div');
   const classes = ['message', msg.sender === username ? 'sent' : 'received'];
@@ -427,6 +547,8 @@ function createMessageEl(msg) {
   if (msg.failed) classes.push('failed');
   messageDiv.className = classes.join(' ');
   messageDiv.dataset.messageId = msg.id;
+  messageDiv.dataset.sender = msg.sender;
+  messageDiv.dataset.timestamp = msg.timestamp;
   messageDiv.innerHTML = `
     <div class="message-content">
       <p>${escapeHtml(msg.content)}</p>
@@ -460,14 +582,13 @@ function renderMessages(messages, { replace = false } = {}) {
     renderedMessageIds = new Set();
     renderedForUser = currentChatUser;
     lastRenderedDate = null;
+    lastRenderedSender = null;
+    lastRenderedTimestamp = null;
+    hideJumpLatest();
   }
 
   if (!messages.length && renderedMessageIds.size === 0) {
-    messagesContainer.innerHTML = `
-      <div class="no-messages">
-        <p>No messages yet. Start the conversation!</p>
-      </div>
-    `;
+    messagesContainer.innerHTML = emptyNoMessagesHtml(currentChatUser || 'them');
     return;
   }
 
@@ -476,8 +597,8 @@ function renderMessages(messages, { replace = false } = {}) {
     empty.remove();
   }
 
-  const nearBottom =
-    messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 80;
+  const nearBottom = isNearBottom();
+  let addedIncoming = 0;
 
   messages.forEach((msg) => {
     if (!msg.id || renderedMessageIds.has(msg.id)) return;
@@ -486,11 +607,19 @@ function renderMessages(messages, { replace = false } = {}) {
     }
     renderedMessageIds.add(msg.id);
     appendDateSeparator(msg.timestamp);
-    messagesContainer.appendChild(createMessageEl(msg));
+    const el = createMessageEl(msg);
+    messagesContainer.appendChild(el);
+    applyGrouping(el, msg);
+    if (!replace && !msg.pending && msg.sender !== username) {
+      addedIncoming += 1;
+    }
   });
 
-  if (nearBottom || replace) {
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  if (replace || nearBottom) {
+    scrollToLatest();
+  } else if (addedIncoming > 0) {
+    hiddenIncoming += addedIncoming - 1;
+    showJumpLatest();
   }
 }
 
@@ -704,6 +833,7 @@ function handleSocketMessage(payload) {
       }
     }
 
+    notifyIncoming(msg);
     loadUsers();
     return;
   }
@@ -807,6 +937,23 @@ async function init() {
     selectUser(hashedUser, { fromHistory: true });
   }
 }
+
+if (jumpLatest) {
+  jumpLatest.addEventListener('click', scrollToLatest);
+}
+
+messagesContainer.addEventListener('scroll', () => {
+  if (isNearBottom()) {
+    hideJumpLatest();
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    backgroundUnread = 0;
+    updateTitleCount();
+  }
+});
 
 init();
 

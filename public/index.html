@@ -23,9 +23,12 @@
                 </div>
                 <div class="form-group">
                     <label for="login-password">Password</label>
-                    <input type="password" id="login-password" autocomplete="current-password" required>
+                    <div class="password-field">
+                        <input type="password" id="login-password" autocomplete="current-password" required>
+                        <button type="button" class="toggle-password" data-target="login-password" aria-label="Show password">Show</button>
+                    </div>
                 </div>
-                <button type="submit" class="btn">Login</button>
+                <button type="submit" class="btn" id="login-submit">Login</button>
                 <p id="login-error" class="error"></p>
             </form>
             
@@ -36,7 +39,10 @@
                 </div>
                 <div class="form-group">
                     <label for="signup-password">Password</label>
-                    <input type="password" id="signup-password" autocomplete="new-password" required minlength="8">
+                    <div class="password-field">
+                        <input type="password" id="signup-password" autocomplete="new-password" required minlength="8">
+                        <button type="button" class="toggle-password" data-target="signup-password" aria-label="Show password">Show</button>
+                    </div>
                     <div class="password-strength">
                         <div class="strength-meter">
                             <div class="strength-bar"></div>
@@ -46,9 +52,12 @@
                 </div>
                 <div class="form-group">
                     <label for="signup-confirm-password">Confirm Password</label>
-                    <input type="password" id="signup-confirm-password" autocomplete="new-password" required minlength="8">
+                    <div class="password-field">
+                        <input type="password" id="signup-confirm-password" autocomplete="new-password" required minlength="8">
+                        <button type="button" class="toggle-password" data-target="signup-confirm-password" aria-label="Show password">Show</button>
+                    </div>
                 </div>
-                <button type="submit" class="btn">Sign Up</button>
+                <button type="submit" class="btn" id="signup-submit">Sign Up</button>
                 <p id="signup-error" class="error"></p>
             </form>
         </div>
