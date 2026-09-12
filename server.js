@@ -151,26 +151,85 @@ async function authenticateUser(req, res, next) {
   next();
 }
 
+// Input validation functions
+function validateUsername(username) {
+  if (!username || typeof username !== 'string') {
+    return { valid: false, error: 'Username is required' };
+  }
+  
+  if (username.length < 3 || username.length > 20) {
+    return { valid: false, error: 'Username must be between 3 and 20 characters' };
+  }
+  
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    return { valid: false, error: 'Username can only contain letters, numbers, and underscores' };
+  }
+  
+  return { valid: true };
+}
+
+function validatePassword(password) {
+  if (!password || typeof password !== 'string') {
+    return { valid: false, error: 'Password is required' };
+  }
+  
+  if (password.length < 6) {
+    return { valid: false, error: 'Password must be at least 6 characters' };
+  }
+  
+  if (password.length > 128) {
+    return { valid: false, error: 'Password must be less than 128 characters' };
+  }
+  
+  return { valid: true };
+}
+
+function validateMessage(content) {
+  if (!content || typeof content !== 'string') {
+    return { valid: false, error: 'Message content is required' };
+  }
+  
+  if (content.trim().length === 0) {
+    return { valid: false, error: 'Message cannot be empty' };
+  }
+  
+  if (content.length > 5000) {
+    return { valid: false, error: 'Message must be less than 5000 characters' };
+  }
+  
+  return { valid: true };
+}
+
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return input;
+  return input.trim();
+}
+
 // User signup
 app.post('/api/signup', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    // Validate and sanitize inputs
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.valid) {
+      return res.status(400).json({ error: usernameValidation.error });
     }
     
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return res.status(400).json({ error: passwordValidation.error });
     }
+    
+    const sanitizedUsername = sanitizeInput(username);
     
     const users = await readJSONFile(USERS_FILE);
-    if (users[username]) {
+    if (users[sanitizedUsername]) {
       return res.status(400).json({ error: 'Username already exists' });
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    users[username] = {
+    users[sanitizedUsername] = {
       password: hashedPassword,
       createdAt: new Date().toISOString()
     };
@@ -188,12 +247,21 @@ app.post('/api/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    // Validate inputs
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.valid) {
+      return res.status(400).json({ error: usernameValidation.error });
     }
     
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return res.status(400).json({ error: passwordValidation.error });
+    }
+    
+    const sanitizedUsername = sanitizeInput(username);
+    
     const users = await readJSONFile(USERS_FILE);
-    const user = users[username];
+    const user = users[sanitizedUsername];
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
@@ -208,7 +276,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     const token = generateSessionToken();
     const sessions = await readJSONFile(SESSIONS_FILE);
     sessions[token] = {
-      username,
+      username: sanitizedUsername,
       createdAt: Date.now()
     };
     await writeJSONFile(SESSIONS_FILE, sessions);
@@ -216,7 +284,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     res.json({ 
       message: 'Login successful',
       token,
-      username
+      username: sanitizedUsername
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -276,16 +344,27 @@ app.post('/api/messages', authenticateUser, async (req, res) => {
   try {
     const { recipient, content } = req.body;
     
-    if (!recipient || !content) {
-      return res.status(400).json({ error: 'Recipient and content are required' });
+    // Validate recipient
+    const recipientValidation = validateUsername(recipient);
+    if (!recipientValidation.valid) {
+      return res.status(400).json({ error: recipientValidation.error });
     }
     
-    if (recipient === req.userId) {
+    // Validate message content
+    const contentValidation = validateMessage(content);
+    if (!contentValidation.valid) {
+      return res.status(400).json({ error: contentValidation.error });
+    }
+    
+    const sanitizedRecipient = sanitizeInput(recipient);
+    const sanitizedContent = sanitizeInput(content);
+    
+    if (sanitizedRecipient === req.userId) {
       return res.status(400).json({ error: 'Cannot send message to yourself' });
     }
     
     const users = await readJSONFile(USERS_FILE);
-    if (!users[recipient]) {
+    if (!users[sanitizedRecipient]) {
       return res.status(404).json({ error: 'Recipient not found' });
     }
     
@@ -293,8 +372,8 @@ app.post('/api/messages', authenticateUser, async (req, res) => {
     const newMessage = {
       id: Date.now().toString(),
       sender: req.userId,
-      recipient,
-      content,
+      recipient: sanitizedRecipient,
+      content: sanitizedContent,
       timestamp: new Date().toISOString(),
       read: false
     };

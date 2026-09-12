@@ -8,6 +8,8 @@ const tabBtns = document.querySelectorAll('.tab-btn');
 const loginError = document.getElementById('login-error');
 const signupError = document.getElementById('signup-error');
 const signupPassword = document.getElementById('signup-password');
+const signupUsername = document.getElementById('signup-username');
+const loginUsername = document.getElementById('login-username');
 const strengthBar = document.querySelector('.strength-bar');
 const strengthText = document.querySelector('.strength-text');
 
@@ -41,6 +43,19 @@ loginForm.addEventListener('submit', async (e) => {
   
   const username = document.getElementById('login-username').value;
   const password = document.getElementById('login-password').value;
+  
+  // Client-side validation
+  const usernameValidation = validateUsername(username);
+  if (!usernameValidation.valid) {
+    loginError.textContent = usernameValidation.error;
+    return;
+  }
+  
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) {
+    loginError.textContent = passwordValidation.error;
+    return;
+  }
   
   try {
     const response = await fetch(`${API_URL}/login`, {
@@ -76,6 +91,19 @@ signupForm.addEventListener('submit', async (e) => {
   const username = document.getElementById('signup-username').value;
   const password = document.getElementById('signup-password').value;
   const confirmPassword = document.getElementById('signup-confirm-password').value;
+  
+  // Client-side validation
+  const usernameValidation = validateUsername(username);
+  if (!usernameValidation.valid) {
+    signupError.textContent = usernameValidation.error;
+    return;
+  }
+  
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) {
+    signupError.textContent = passwordValidation.error;
+    return;
+  }
   
   // Validate passwords match
   if (password !== confirmPassword) {
@@ -136,6 +164,31 @@ function checkPasswordStrength(password) {
   return strength;
 }
 
+// Client-side validation functions
+function validateUsername(username) {
+  if (!username || username.length < 3 || username.length > 20) {
+    return { valid: false, error: 'Username must be between 3 and 20 characters' };
+  }
+  
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    return { valid: false, error: 'Username can only contain letters, numbers, and underscores' };
+  }
+  
+  return { valid: true };
+}
+
+function validatePassword(password) {
+  if (!password || password.length < 6) {
+    return { valid: false, error: 'Password must be at least 6 characters' };
+  }
+  
+  if (password.length > 128) {
+    return { valid: false, error: 'Password must be less than 128 characters' };
+  }
+  
+  return { valid: true };
+}
+
 // Update password strength meter
 signupPassword.addEventListener('input', () => {
   const password = signupPassword.value;
@@ -164,6 +217,34 @@ signupPassword.addEventListener('input', () => {
     strengthBar.style.width = '0%';
     strengthText.textContent = 'Password strength';
     strengthText.style.color = '#666';
+  }
+});
+
+// Real-time username validation
+signupUsername.addEventListener('input', () => {
+  const username = signupUsername.value;
+  const validation = validateUsername(username);
+  
+  if (username.length > 0 && !validation.valid) {
+    signupUsername.style.borderColor = '#e74c3c';
+  } else {
+    signupUsername.style.borderColor = '#e0e0e0';
+  }
+});
+
+// Clear validation styles on focus
+signupUsername.addEventListener('focus', () => {
+  signupUsername.style.borderColor = '#667eea';
+});
+
+signupUsername.addEventListener('blur', () => {
+  const username = signupUsername.value;
+  const validation = validateUsername(username);
+  
+  if (username.length > 0 && !validation.valid) {
+    signupUsername.style.borderColor = '#e74c3c';
+  } else {
+    signupUsername.style.borderColor = '#e0e0e0';
   }
 });
 

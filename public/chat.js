@@ -229,6 +229,53 @@ messageForm.addEventListener('submit', async (e) => {
     return;
   }
   
+  // Client-side validation
+  if (content.length === 0) {
+    alert('Message cannot be empty');
+    return;
+  }
+  
+  if (content.length > 5000) {
+    alert('Message must be less than 5000 characters');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${API_URL}/messages`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        recipient: currentChatUser,
+        content
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok) {
+      messageInput.value = '';
+      loadMessages(currentChatUser);
+    } else {
+      console.error('Failed to send message:', data.error);
+      alert('Failed to send message: ' + (data.error || 'Unknown error'));
+    }
+  } catch (error) {
+    console.error('Error sending message:', error);
+    alert('Network error. Please try again.');
+  }
+});
+
+// Real-time message input validation
+messageInput.addEventListener('input', () => {
+  const content = messageInput.value;
+  
+  if (content.length > 5000) {
+    messageInput.style.borderColor = '#e74c3c';
+  } else {
+    messageInput.style.borderColor = '#e0e0e0';
+  }
+});
+  
   try {
     const response = await fetch(`${API_URL}/messages`, {
       method: 'POST',
