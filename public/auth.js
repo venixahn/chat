@@ -1,5 +1,4 @@
-// API base URL
-const API_URL = 'http://localhost:3000/api';
+const API_URL = '/api';
 
 // DOM elements
 const loginForm = document.getElementById('login-form');
@@ -44,22 +43,21 @@ loginForm.addEventListener('submit', async (e) => {
   const username = document.getElementById('login-username').value;
   const password = document.getElementById('login-password').value;
   
-  // Client-side validation
   const usernameValidation = validateUsername(username);
   if (!usernameValidation.valid) {
     loginError.textContent = usernameValidation.error;
     return;
   }
-  
-  const passwordValidation = validatePassword(password);
-  if (!passwordValidation.valid) {
-    loginError.textContent = passwordValidation.error;
+
+  if (!password) {
+    loginError.textContent = 'Password is required';
     return;
   }
   
   try {
     const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -69,11 +67,8 @@ loginForm.addEventListener('submit', async (e) => {
     const data = await response.json();
     
     if (response.ok) {
-      // Store token and username
-      localStorage.setItem('token', data.token);
+      localStorage.removeItem('token');
       localStorage.setItem('username', data.username);
-      
-      // Redirect to chat page
       window.location.href = '/chat.html';
     } else {
       loginError.textContent = data.error || 'Login failed';
@@ -99,7 +94,7 @@ signupForm.addEventListener('submit', async (e) => {
     return;
   }
   
-  const passwordValidation = validatePassword(password);
+  const passwordValidation = validateSignupPassword(password);
   if (!passwordValidation.valid) {
     signupError.textContent = passwordValidation.error;
     return;
@@ -114,6 +109,7 @@ signupForm.addEventListener('submit', async (e) => {
   try {
     const response = await fetch(`${API_URL}/signup`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -177,15 +173,19 @@ function validateUsername(username) {
   return { valid: true };
 }
 
-function validatePassword(password) {
-  if (!password || password.length < 6) {
-    return { valid: false, error: 'Password must be at least 6 characters' };
+function validateSignupPassword(password) {
+  if (!password || password.length < 8) {
+    return { valid: false, error: 'Password must be at least 8 characters' };
   }
-  
+
   if (password.length > 128) {
     return { valid: false, error: 'Password must be less than 128 characters' };
   }
-  
+
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return { valid: false, error: 'Password must include a letter and a number' };
+  }
+
   return { valid: true };
 }
 
@@ -215,7 +215,7 @@ signupPassword.addEventListener('input', () => {
   
   if (password.length === 0) {
     strengthBar.style.width = '0%';
-    strengthText.textContent = 'Password strength';
+    strengthText.textContent = 'Use 8+ characters with a letter and a number';
     strengthText.style.color = '#666';
   }
 });
@@ -248,10 +248,16 @@ signupUsername.addEventListener('blur', () => {
   }
 });
 
-// Check if user is already logged in
-window.addEventListener('load', () => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    window.location.href = '/chat.html';
+window.addEventListener('load', async () => {
+  try {
+    const response = await fetch(`${API_URL}/me`, {
+      credentials: 'same-origin'
+    });
+
+    if (response.ok) {
+      window.location.href = '/chat.html';
+    }
+  } catch (error) {
+    console.error('Session check error:', error);
   }
 });
