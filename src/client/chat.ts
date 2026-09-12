@@ -1,18 +1,59 @@
 const API_URL = '/api';
 
-const chatContainer = document.getElementById('chat-container');
-const currentUsername = document.getElementById('current-username');
-const logoutBtn = document.getElementById('logout-btn');
-const usersList = document.getElementById('users-list');
-const userSearch = document.getElementById('user-search');
-const chatWithUser = document.getElementById('chat-with-user');
-const backBtn = document.getElementById('back-btn');
-const messagesContainer = document.getElementById('messages-container');
-const messageForm = document.getElementById('message-form');
-const messageInput = document.getElementById('message-input');
-const sendBtn = document.getElementById('send-btn');
+interface LastMessagePreview {
+  content: string;
+  timestamp: string;
+  sender: string;
+}
+
+interface UserSummary {
+  username: string;
+  unread: number;
+  lastMessage: LastMessagePreview | null;
+}
+
+interface ChatMessage {
+  id: string;
+  sender: string;
+  recipient: string;
+  content: string;
+  timestamp: string;
+  read?: boolean;
+  pending?: boolean;
+  failed?: boolean;
+}
+
+type ConnectionState = 'open' | 'offline' | 'reconnecting';
+type ToastTone = 'info' | 'error';
+
+type SocketPayload =
+  | { type: 'message'; message: ChatMessage }
+  | { type: 'users_changed' }
+  | { type: 'presence'; online: string[] }
+  | { type: 'typing'; from: string }
+  | { type: 'unread'; unread?: Record<string, number> };
+
+function requireElement<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) {
+    throw new Error(`Missing #${id}`);
+  }
+  return el as T;
+}
+
+const chatContainer = requireElement<HTMLElement>('chat-container');
+const currentUsername = requireElement<HTMLElement>('current-username');
+const logoutBtn = requireElement<HTMLButtonElement>('logout-btn');
+const usersList = requireElement<HTMLElement>('users-list');
+const userSearch = requireElement<HTMLInputElement>('user-search');
+const chatWithUser = requireElement<HTMLElement>('chat-with-user');
+const backBtn = requireElement<HTMLButtonElement>('back-btn');
+const messagesContainer = requireElement<HTMLElement>('messages-container');
+const messageForm = requireElement<HTMLFormElement>('message-form');
+const messageInput = requireElement<HTMLTextAreaElement>('message-input');
+const sendBtn = requireElement<HTMLButtonElement>('send-btn');
 const charCount = document.getElementById('char-count');
-const typingStatus = document.getElementById('typing-status');
+const typingStatus = requireElement<HTMLElement>('typing-status');
 const connectionBanner = document.getElementById('connection-banner');
 const toastRegion = document.getElementById('toast-region');
 const jumpLatest = document.getElementById('jump-latest');
@@ -24,41 +65,41 @@ const COMPOSER_MAX_HEIGHT = 120;
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 const BASE_TITLE = 'Chat - Chat App';
 
-let currentChatUser = null;
-let username = localStorage.getItem('username');
-let socket = null;
-let reconnectTimer = null;
-let fallbackPoll = null;
-let renderedMessageIds = new Set();
-let renderedForUser = null;
-let lastRenderedDate = null;
-let lastRenderedSender = null;
-let lastRenderedTimestamp = null;
-let onlineUsers = new Set();
+let currentChatUser: string | null = null;
+let username: string | null = localStorage.getItem('username');
+let socket: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let fallbackPoll: ReturnType<typeof setInterval> | null = null;
+let renderedMessageIds = new Set<string>();
+let renderedForUser: string | null = null;
+let lastRenderedDate: string | null = null;
+let lastRenderedSender: string | null = null;
+let lastRenderedTimestamp: number | null = null;
+let onlineUsers = new Set<string>();
 let shuttingDown = false;
-let typingThrottle = null;
-let hideTypingTimer = null;
-let toastTimer = null;
+let typingThrottle: ReturnType<typeof setTimeout> | null = null;
+let hideTypingTimer: ReturnType<typeof setTimeout> | null = null;
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenIncoming = 0;
 let backgroundUnread = 0;
 let notificationAsked = false;
 
-function clearSessionStorage() {
+function clearSessionStorage(): void {
   localStorage.removeItem('token');
   localStorage.removeItem('username');
 }
 
-function showToast(message, tone = 'info') {
+function showToast(message: string, tone: ToastTone = 'info'): void {
   if (!toastRegion) return;
   toastRegion.textContent = message;
   toastRegion.className = `toast-region toast-visible toast-${tone}`;
-  clearTimeout(toastTimer);
+  if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastRegion.classList.remove('toast-visible');
   }, 4000);
 }
 
-function setConnectionState(state) {
+function setConnectionState(state: ConnectionState): void {
   if (connectionBanner) {
     if (state === 'open') {
       connectionBanner.classList.add('hidden');
@@ -86,14 +127,16 @@ function setConnectionState(state) {
   chatContainer.classList.toggle('disconnected', state !== 'open');
 }
 
-async function apiFetch(path, options = {}) {
+async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(options.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
   const response = await fetch(`${API_URL}${path}`, {
     credentials: 'same-origin',
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }
+    headers
   });
 
   if (response.status === 401) {
@@ -104,7 +147,7 @@ async function apiFetch(path, options = {}) {
   return response;
 }
 
-function handleSessionExpiry() {
+function handleSessionExpiry(): void {
   if (shuttingDown) return;
   shuttingDown = true;
 
@@ -112,8 +155,8 @@ function handleSessionExpiry() {
     socket.close();
     socket = null;
   }
-  clearTimeout(reconnectTimer);
-  clearInterval(fallbackPoll);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (fallbackPoll) clearInterval(fallbackPoll);
 
   clearSessionStorage();
   showToast('Your session expired. Redirecting to login…', 'error');
@@ -122,20 +165,20 @@ function handleSessionExpiry() {
   }, 1200);
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: unknown): string {
   const div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);
   return div.innerHTML;
 }
 
-function formatTime(timestamp) {
+function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit'
   });
 }
 
-function formatListTime(timestamp) {
+function formatListTime(timestamp?: string): string {
   if (!timestamp) return '';
   const date = new Date(timestamp);
   const now = new Date();
@@ -152,7 +195,7 @@ function formatListTime(timestamp) {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function formatDay(timestamp) {
+function formatDay(timestamp: string): string {
   const date = new Date(timestamp);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) return 'Today';
@@ -168,16 +211,16 @@ function formatDay(timestamp) {
   });
 }
 
-function dayKey(timestamp) {
+function dayKey(timestamp: string): string {
   return new Date(timestamp).toDateString();
 }
 
-function previewText(content) {
+function previewText(content?: string): string {
   const text = (content || '').replace(/\s+/g, ' ').trim();
   return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 }
 
-function initialsFor(name) {
+function initialsFor(name?: string): string {
   const clean = (name || '').trim();
   if (!clean) return '?';
   const parts = clean.split(/[_\s]+/).filter(Boolean);
@@ -187,7 +230,7 @@ function initialsFor(name) {
   return clean.slice(0, 2).toUpperCase();
 }
 
-function avatarColor(name) {
+function avatarColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i += 1) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -196,11 +239,11 @@ function avatarColor(name) {
   return `hsl(${hue}, 52%, 46%)`;
 }
 
-function setThreadOpen(open) {
+function setThreadOpen(open: boolean): void {
   chatContainer.classList.toggle('thread-open', open);
 }
 
-function emptyChatSelectedHtml() {
+function emptyChatSelectedHtml(): string {
   return `
     <div class="empty-state no-chat-selected">
       <p class="empty-title">Pick a conversation</p>
@@ -209,7 +252,7 @@ function emptyChatSelectedHtml() {
   `;
 }
 
-function emptyNoMessagesHtml(user) {
+function emptyNoMessagesHtml(user: string): string {
   return `
     <div class="empty-state no-messages">
       <p class="empty-title">No messages yet</p>
@@ -218,7 +261,7 @@ function emptyNoMessagesHtml(user) {
   `;
 }
 
-function emptyNoUsersHtml() {
+function emptyNoUsersHtml(): string {
   return `
     <div class="empty-state no-users">
       <p class="empty-title">You're the only one here</p>
@@ -227,34 +270,34 @@ function emptyNoUsersHtml() {
   `;
 }
 
-function isNearBottom() {
+function isNearBottom(): boolean {
   return messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 80;
 }
 
-function hideJumpLatest() {
+function hideJumpLatest(): void {
   hiddenIncoming = 0;
   if (jumpLatest) jumpLatest.classList.add('hidden');
 }
 
-function showJumpLatest() {
+function showJumpLatest(): void {
   hiddenIncoming += 1;
   if (!jumpLatest) return;
   jumpLatest.textContent = hiddenIncoming === 1 ? '1 new message' : `${hiddenIncoming} new messages`;
   jumpLatest.classList.remove('hidden');
 }
 
-function scrollToLatest() {
+function scrollToLatest(): void {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
   hideJumpLatest();
 }
 
-function updateTitleCount() {
+function updateTitleCount(): void {
   document.title = document.hidden && backgroundUnread > 0
     ? `(${backgroundUnread}) ${BASE_TITLE}`
     : BASE_TITLE;
 }
 
-function notifyIncoming(msg) {
+function notifyIncoming(msg: ChatMessage): void {
   if (!msg || msg.sender === username || !document.hidden) return;
 
   backgroundUnread += 1;
@@ -272,18 +315,18 @@ function notifyIncoming(msg) {
 
   if (Notification.permission === 'default' && !notificationAsked) {
     notificationAsked = true;
-    Notification.requestPermission();
+    void Notification.requestPermission();
   }
 }
 
-function resizeComposer() {
+function resizeComposer(): void {
   messageInput.style.height = 'auto';
   const next = Math.min(messageInput.scrollHeight, COMPOSER_MAX_HEIGHT);
   messageInput.style.height = `${next}px`;
   messageInput.style.overflowY = messageInput.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
 }
 
-function closeThread({ fromHistory = false } = {}) {
+function closeThread({ fromHistory = false }: { fromHistory?: boolean } = {}): void {
   currentChatUser = null;
   setThreadOpen(false);
   chatWithUser.textContent = 'Select a user to chat';
@@ -300,7 +343,7 @@ function closeThread({ fromHistory = false } = {}) {
   lastRenderedSender = null;
   lastRenderedTimestamp = null;
   hideJumpLatest();
-  document.querySelectorAll('.user-item').forEach((item) => {
+  document.querySelectorAll<HTMLElement>('.user-item').forEach((item) => {
     item.classList.remove('active');
     item.setAttribute('aria-pressed', 'false');
   });
@@ -315,12 +358,12 @@ logoutBtn.addEventListener('click', async () => {
     socket.close();
     socket = null;
   }
-  clearTimeout(reconnectTimer);
-  clearInterval(fallbackPoll);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (fallbackPoll) clearInterval(fallbackPoll);
 
   try {
     await apiFetch('/logout', { method: 'POST' });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Logout error:', error);
   }
 
@@ -343,12 +386,13 @@ window.addEventListener('popstate', () => {
   }
 });
 
-function applyUserFilter() {
+function applyUserFilter(): void {
   const query = (userSearch.value || '').trim().toLowerCase();
   let visible = 0;
 
-  usersList.querySelectorAll('.user-item').forEach((item) => {
-    const match = !query || item.dataset.username.toLowerCase().includes(query);
+  usersList.querySelectorAll<HTMLElement>('.user-item').forEach((item) => {
+    const name = item.dataset.username ?? '';
+    const match = !query || name.toLowerCase().includes(query);
     item.hidden = !match;
     if (match) visible += 1;
   });
@@ -372,43 +416,49 @@ function applyUserFilter() {
 
 userSearch.addEventListener('input', applyUserFilter);
 
-function syncUserItem(item, user) {
+function syncUserItem(item: HTMLElement, user: UserSummary): void {
   const nameEl = item.querySelector('.user-name');
   const previewEl = item.querySelector('.user-preview');
   const timeEl = item.querySelector('.user-time');
   const badge = item.querySelector('.unread-badge');
-  const avatar = item.querySelector('.user-avatar');
+  const avatar = item.querySelector<HTMLElement>('.user-avatar');
 
-  nameEl.textContent = user.username;
-  avatar.textContent = initialsFor(user.username);
-  avatar.style.background = avatarColor(user.username);
+  if (nameEl) nameEl.textContent = user.username;
+  if (avatar) {
+    avatar.textContent = initialsFor(user.username);
+    avatar.style.background = avatarColor(user.username);
+  }
   item.classList.toggle('active', user.username === currentChatUser);
   item.classList.toggle('online', onlineUsers.has(user.username));
   item.setAttribute('aria-pressed', user.username === currentChatUser ? 'true' : 'false');
 
-  if (user.lastMessage) {
-    const prefix = user.lastMessage.sender === username ? 'You: ' : '';
-    previewEl.textContent = prefix + previewText(user.lastMessage.content);
-    previewEl.classList.remove('hidden');
-    timeEl.textContent = formatListTime(user.lastMessage.timestamp);
-  } else {
-    previewEl.textContent = 'No messages yet';
-    previewEl.classList.remove('hidden');
-    timeEl.textContent = '';
+  if (previewEl) {
+    if (user.lastMessage) {
+      const prefix = user.lastMessage.sender === username ? 'You: ' : '';
+      previewEl.textContent = prefix + previewText(user.lastMessage.content);
+      previewEl.classList.remove('hidden');
+      if (timeEl) timeEl.textContent = formatListTime(user.lastMessage.timestamp);
+    } else {
+      previewEl.textContent = 'No messages yet';
+      previewEl.classList.remove('hidden');
+      if (timeEl) timeEl.textContent = '';
+    }
   }
 
   const count = user.unread || 0;
   const unread = count > 0 && user.username !== currentChatUser;
   item.classList.toggle('unread', unread);
-  if (unread) {
-    badge.textContent = count;
-    badge.classList.remove('hidden');
-  } else {
-    badge.classList.add('hidden');
+  if (badge) {
+    if (unread) {
+      badge.textContent = String(count);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
 }
 
-function createUserItem(user) {
+function createUserItem(user: UserSummary): HTMLElement {
   const userItem = document.createElement('div');
   userItem.className = 'user-item';
   userItem.dataset.username = user.username;
@@ -430,7 +480,9 @@ function createUserItem(user) {
   `;
   syncUserItem(userItem, user);
 
-  const open = () => selectUser(user.username);
+  const open = (): void => {
+    selectUser(user.username);
+  };
   userItem.addEventListener('click', open);
   userItem.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -442,10 +494,12 @@ function createUserItem(user) {
   return userItem;
 }
 
-function renderUsers(users) {
-  const existing = new Map();
-  usersList.querySelectorAll('.user-item').forEach((item) => {
-    existing.set(item.dataset.username, item);
+function renderUsers(users: UserSummary[]): void {
+  const existing = new Map<string, HTMLElement>();
+  usersList.querySelectorAll<HTMLElement>('.user-item').forEach((item) => {
+    if (item.dataset.username) {
+      existing.set(item.dataset.username, item);
+    }
   });
 
   usersList.querySelectorAll('.no-users').forEach((el) => el.remove());
@@ -476,10 +530,10 @@ function renderUsers(users) {
   applyUserFilter();
 }
 
-async function loadUsers() {
+async function loadUsers(): Promise<void> {
   try {
     const response = await apiFetch('/users');
-    const data = await response.json();
+    const data = await response.json() as { users?: UserSummary[]; online?: string[]; error?: string };
     if (!response.ok) {
       console.error('Failed to load users:', data.error);
       return;
@@ -489,14 +543,14 @@ async function loadUsers() {
       onlineUsers = new Set(data.online);
     }
     renderUsers(data.users || []);
-  } catch (error) {
-    if (error.message !== 'Unauthorized') {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message !== 'Unauthorized') {
       console.error('Error loading users:', error);
     }
   }
 }
 
-function appendDateSeparator(timestamp) {
+function appendDateSeparator(timestamp: string): void {
   const key = dayKey(timestamp);
   if (key === lastRenderedDate) return;
   lastRenderedDate = key;
@@ -507,7 +561,7 @@ function appendDateSeparator(timestamp) {
   messagesContainer.appendChild(separator);
 }
 
-function markMessageFailed(el, content, recipient) {
+function markMessageFailed(el: HTMLElement, content: string, recipient: string): void {
   el.classList.remove('pending');
   el.classList.add('failed');
   el.dataset.content = content;
@@ -519,11 +573,11 @@ function markMessageFailed(el, content, recipient) {
   if (time) time.textContent = 'Failed · tap to retry';
 }
 
-function applyGrouping(el, msg) {
+function applyGrouping(el: HTMLElement, msg: ChatMessage): void {
   const ts = new Date(msg.timestamp).getTime();
   const grouped = lastRenderedSender === msg.sender
     && lastRenderedDate === dayKey(msg.timestamp)
-    && lastRenderedTimestamp
+    && lastRenderedTimestamp !== null
     && ts - lastRenderedTimestamp < GROUP_WINDOW_MS;
 
   if (grouped) {
@@ -540,7 +594,7 @@ function applyGrouping(el, msg) {
   lastRenderedTimestamp = ts;
 }
 
-function createMessageEl(msg) {
+function createMessageEl(msg: ChatMessage): HTMLElement {
   const messageDiv = document.createElement('div');
   const classes = ['message', msg.sender === username ? 'sent' : 'received'];
   if (msg.pending) classes.push('pending');
@@ -563,20 +617,22 @@ function createMessageEl(msg) {
   return messageDiv;
 }
 
-function consumeOptimistic(realMsg) {
+function consumeOptimistic(realMsg: ChatMessage): void {
   if (realMsg.sender !== username) return;
 
-  const match = [...messagesContainer.querySelectorAll('.message.pending')].find((el) => {
+  const match = [...messagesContainer.querySelectorAll<HTMLElement>('.message.pending')].find((el) => {
     return el.querySelector('p')?.textContent === realMsg.content;
   });
 
   if (!match) return;
 
-  renderedMessageIds.delete(match.dataset.messageId);
+  if (match.dataset.messageId) {
+    renderedMessageIds.delete(match.dataset.messageId);
+  }
   match.remove();
 }
 
-function renderMessages(messages, { replace = false } = {}) {
+function renderMessages(messages: ChatMessage[], { replace = false }: { replace?: boolean } = {}): void {
   if (replace || renderedForUser !== currentChatUser) {
     messagesContainer.innerHTML = '';
     renderedMessageIds = new Set();
@@ -623,33 +679,33 @@ function renderMessages(messages, { replace = false } = {}) {
   }
 }
 
-async function loadMessages(user, { replace = false } = {}) {
+async function loadMessages(user: string, { replace = false }: { replace?: boolean } = {}): Promise<void> {
   try {
     const response = await apiFetch(`/messages/${encodeURIComponent(user)}`);
-    const data = await response.json();
+    const data = await response.json() as { messages?: ChatMessage[]; error?: string };
     if (!response.ok) {
       console.error('Failed to load messages:', data.error);
       return;
     }
     renderMessages(data.messages || [], { replace });
-  } catch (error) {
-    if (error.message !== 'Unauthorized') {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message !== 'Unauthorized') {
       console.error('Error loading messages:', error);
     }
   }
 }
 
-async function markConversationRead(user) {
+async function markConversationRead(user: string): Promise<void> {
   try {
     await apiFetch(`/messages/${encodeURIComponent(user)}/read`, { method: 'POST' });
-  } catch (error) {
-    if (error.message !== 'Unauthorized') {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message !== 'Unauthorized') {
       console.error('Error marking messages read:', error);
     }
   }
 }
 
-function selectUser(user, { fromHistory = false } = {}) {
+function selectUser(user: string, { fromHistory = false }: { fromHistory?: boolean } = {}): void {
   currentChatUser = user;
   setThreadOpen(true);
   chatWithUser.textContent = `Chat with ${user}`;
@@ -659,7 +715,7 @@ function selectUser(user, { fromHistory = false } = {}) {
   resizeComposer();
   messageInput.focus();
 
-  document.querySelectorAll('.user-item').forEach((item) => {
+  document.querySelectorAll<HTMLElement>('.user-item').forEach((item) => {
     const active = item.dataset.username === user;
     item.classList.toggle('active', active);
     item.classList.toggle('unread', false);
@@ -674,11 +730,11 @@ function selectUser(user, { fromHistory = false } = {}) {
     history.pushState({ chat: user }, '', `#${encodeURIComponent(user)}`);
   }
 
-  loadMessages(user, { replace: true });
-  markConversationRead(user);
+  void loadMessages(user, { replace: true });
+  void markConversationRead(user);
 }
 
-function updateCharCount() {
+function updateCharCount(): void {
   if (!charCount) return;
   const length = messageInput.value.length;
   const show = length >= CHAR_COUNT_REVEAL_AT;
@@ -688,8 +744,8 @@ function updateCharCount() {
   messageInput.classList.toggle('invalid', length > MAX_MESSAGE_LENGTH);
 }
 
-function sendTypingNotice() {
-  if (!currentChatUser || !socket || socket.readyState !== 1) return;
+function sendTypingNotice(): void {
+  if (!currentChatUser || !socket || socket.readyState !== WebSocket.OPEN) return;
   if (typingThrottle) return;
 
   socket.send(JSON.stringify({ type: 'typing', to: currentChatUser }));
@@ -698,28 +754,34 @@ function sendTypingNotice() {
   }, 1500);
 }
 
-function showTyping(from) {
+function showTyping(from: string): void {
   if (from !== currentChatUser) return;
   typingStatus.textContent = `${from} is typing…`;
-  clearTimeout(hideTypingTimer);
+  if (hideTypingTimer) clearTimeout(hideTypingTimer);
   hideTypingTimer = setTimeout(() => {
     typingStatus.textContent = '';
   }, 2000);
 }
 
-function updateLocalPreview(content) {
-  const item = document.querySelector(`[data-username="${currentChatUser}"]`);
+function updateLocalPreview(content: string): void {
+  const item = document.querySelector<HTMLElement>(`[data-username="${currentChatUser}"]`);
   if (!item) return;
   const previewEl = item.querySelector('.user-preview');
   const timeEl = item.querySelector('.user-time');
-  previewEl.textContent = `You: ${previewText(content)}`;
-  previewEl.classList.remove('hidden');
+  if (previewEl) {
+    previewEl.textContent = `You: ${previewText(content)}`;
+    previewEl.classList.remove('hidden');
+  }
   if (timeEl) timeEl.textContent = formatListTime(new Date().toISOString());
   usersList.prepend(item);
 }
 
-async function sendMessage(content, recipient, { replaceFailedId } = {}) {
-  if (!content || !recipient) return;
+async function sendMessage(
+  content: string,
+  recipient: string,
+  { replaceFailedId }: { replaceFailedId?: string } = {}
+): Promise<void> {
+  if (!content || !recipient || !username) return;
 
   if (content.length > MAX_MESSAGE_LENGTH) {
     showToast('Message must be less than 5000 characters', 'error');
@@ -727,7 +789,7 @@ async function sendMessage(content, recipient, { replaceFailedId } = {}) {
   }
 
   if (replaceFailedId) {
-    const failed = document.querySelector(`[data-message-id="${replaceFailedId}"]`);
+    const failed = document.querySelector<HTMLElement>(`[data-message-id="${replaceFailedId}"]`);
     if (failed) {
       renderedMessageIds.delete(replaceFailedId);
       failed.remove();
@@ -735,7 +797,7 @@ async function sendMessage(content, recipient, { replaceFailedId } = {}) {
   }
 
   const tempId = `temp-${crypto.randomUUID()}`;
-  const optimistic = {
+  const optimistic: ChatMessage = {
     id: tempId,
     sender: username,
     recipient,
@@ -746,8 +808,6 @@ async function sendMessage(content, recipient, { replaceFailedId } = {}) {
 
   if (recipient === currentChatUser) {
     renderMessages([optimistic]);
-  }
-  if (recipient === currentChatUser) {
     updateLocalPreview(content);
   }
 
@@ -756,7 +816,7 @@ async function sendMessage(content, recipient, { replaceFailedId } = {}) {
       method: 'POST',
       body: JSON.stringify({ recipient, content })
     });
-    const data = await response.json();
+    const data = await response.json() as { data?: ChatMessage; error?: string };
 
     if (!response.ok) {
       throw new Error(data.error || 'Failed to send message');
@@ -765,17 +825,18 @@ async function sendMessage(content, recipient, { replaceFailedId } = {}) {
     if (data.data && recipient === currentChatUser) {
       renderMessages([data.data]);
     }
-    loadUsers();
-  } catch (error) {
-    if (error.message === 'Unauthorized') return;
+    void loadUsers();
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Unauthorized') return;
 
-    const pending = document.querySelector(`[data-message-id="${tempId}"]`);
+    const pending = document.querySelector<HTMLElement>(`[data-message-id="${tempId}"]`);
     if (pending) {
       markMessageFailed(pending, content, recipient);
     }
 
     console.error('Error sending message:', error);
-    showToast(error.message || 'Failed to send message', 'error');
+    const message = error instanceof Error ? error.message : 'Failed to send message';
+    showToast(message, 'error');
   }
 }
 
@@ -787,7 +848,7 @@ messageForm.addEventListener('submit', (event) => {
   messageInput.value = '';
   resizeComposer();
   updateCharCount();
-  sendMessage(content, currentChatUser);
+  void sendMessage(content, currentChatUser);
 });
 
 messageInput.addEventListener('keydown', (event) => {
@@ -804,24 +865,34 @@ messageInput.addEventListener('input', () => {
 });
 
 messagesContainer.addEventListener('click', (event) => {
-  const failed = event.target.closest('.message.failed');
-  if (!failed) return;
-  sendMessage(failed.dataset.content, failed.dataset.recipient, {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const failed = target.closest('.message.failed');
+  if (!(failed instanceof HTMLElement)) return;
+  const content = failed.dataset.content;
+  const recipient = failed.dataset.recipient;
+  if (!content || !recipient) return;
+  void sendMessage(content, recipient, {
     replaceFailedId: failed.dataset.messageId
   });
 });
 
 messagesContainer.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' && event.key !== ' ') return;
-  const failed = event.target.closest('.message.failed');
-  if (!failed) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const failed = target.closest('.message.failed');
+  if (!(failed instanceof HTMLElement)) return;
   event.preventDefault();
-  sendMessage(failed.dataset.content, failed.dataset.recipient, {
+  const content = failed.dataset.content;
+  const recipient = failed.dataset.recipient;
+  if (!content || !recipient) return;
+  void sendMessage(content, recipient, {
     replaceFailedId: failed.dataset.messageId
   });
 });
 
-function handleSocketMessage(payload) {
+function handleSocketMessage(payload: SocketPayload): void {
   if (payload.type === 'message' && payload.message) {
     const msg = payload.message;
     const otherUser = msg.sender === username ? msg.recipient : msg.sender;
@@ -829,24 +900,24 @@ function handleSocketMessage(payload) {
     if (currentChatUser === otherUser) {
       renderMessages([msg]);
       if (msg.recipient === username) {
-        markConversationRead(otherUser);
+        void markConversationRead(otherUser);
       }
     }
 
     notifyIncoming(msg);
-    loadUsers();
+    void loadUsers();
     return;
   }
 
   if (payload.type === 'users_changed') {
-    loadUsers();
+    void loadUsers();
     return;
   }
 
   if (payload.type === 'presence' && Array.isArray(payload.online)) {
     onlineUsers = new Set(payload.online);
-    document.querySelectorAll('.user-item').forEach((item) => {
-      item.classList.toggle('online', onlineUsers.has(item.dataset.username));
+    document.querySelectorAll<HTMLElement>('.user-item').forEach((item) => {
+      item.classList.toggle('online', onlineUsers.has(item.dataset.username ?? ''));
     });
     return;
   }
@@ -857,24 +928,24 @@ function handleSocketMessage(payload) {
   }
 
   if (payload.type === 'unread') {
-    loadUsers();
+    void loadUsers();
   }
 }
 
-function connectSocket() {
+function connectSocket(): void {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
   socket.addEventListener('open', () => {
     setConnectionState('open');
-    clearInterval(fallbackPoll);
+    if (fallbackPoll) clearInterval(fallbackPoll);
     fallbackPoll = null;
   });
 
   socket.addEventListener('message', (event) => {
     try {
-      handleSocketMessage(JSON.parse(event.data));
-    } catch (error) {
+      handleSocketMessage(JSON.parse(String(event.data)) as SocketPayload);
+    } catch (error: unknown) {
       console.error('Invalid socket message:', error);
     }
   });
@@ -889,9 +960,9 @@ function connectSocket() {
     setConnectionState(navigator.onLine ? 'reconnecting' : 'offline');
     if (!fallbackPoll) {
       fallbackPoll = setInterval(() => {
-        loadUsers();
+        void loadUsers();
         if (currentChatUser) {
-          loadMessages(currentChatUser);
+          void loadMessages(currentChatUser);
         }
       }, 15000);
     }
@@ -904,16 +975,16 @@ window.addEventListener('offline', () => {
 });
 
 window.addEventListener('online', () => {
-  if (!socket || socket.readyState !== 1) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
     setConnectionState('reconnecting');
   }
 });
 
-async function init() {
+async function init(): Promise<void> {
   try {
     const response = await apiFetch('/me');
-    const data = await response.json();
-    if (!response.ok) {
+    const data = await response.json() as { username?: string };
+    if (!response.ok || !data.username) {
       handleSessionExpiry();
       return;
     }
@@ -922,8 +993,8 @@ async function init() {
     localStorage.setItem('username', username);
     localStorage.removeItem('token');
     currentUsername.textContent = username;
-  } catch (error) {
-    if (error.message !== 'Unauthorized') {
+  } catch (error: unknown) {
+    if (!(error instanceof Error) || error.message !== 'Unauthorized') {
       handleSessionExpiry();
     }
     return;
@@ -955,11 +1026,13 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-init();
+export {};
+
+void init();
 
 window.addEventListener('beforeunload', () => {
-  clearTimeout(reconnectTimer);
-  clearInterval(fallbackPoll);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (fallbackPoll) clearInterval(fallbackPoll);
   if (socket) {
     socket.close();
   }

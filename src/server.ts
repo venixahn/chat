@@ -1,19 +1,32 @@
-const http = require('http');
-const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs').promises;
+import http from 'http';
+import type { IncomingMessage } from 'http';
+import crypto from 'crypto';
+import path from 'path';
+import fs from 'fs/promises';
 
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const rateLimit = require('express-rate-limit');
-const cookieParser = require('cookie-parser');
-const { WebSocketServer } = require('ws');
+import express from 'express';
+import type { CookieOptions, NextFunction, Request, Response } from 'express';
+import cors from 'cors';
+import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
+import { WebSocket, WebSocketServer } from 'ws';
 
+import type {
+  ChatMessage,
+  LastMessagePreview,
+  SessionRecord,
+  Store,
+  UserRecord,
+  UserSummary,
+  ValidationResult
+} from './types';
+
+const ROOT_DIR = path.join(__dirname, '..');
 const app = express();
 app.disable('x-powered-by');
 const server = http.createServer(app);
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const SESSION_TIMEOUT = 30 * 60 * 1000;
 const COOKIE_NAME = 'session';
 
@@ -42,7 +55,7 @@ app.use(cors({
 app.use(generalLimiter);
 app.use(express.json({ limit: '20kb' }));
 app.use(cookieParser());
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -53,46 +66,50 @@ app.use((req, res, next) => {
   );
   next();
 });
-app.use(express.static('public'));
+app.use(express.static(path.join(ROOT_DIR, 'public')));
 
-const USERS_FILE = path.join(__dirname, 'database', 'users.json');
-const MESSAGES_FILE = path.join(__dirname, 'database', 'messages.json');
-const SESSIONS_FILE = path.join(__dirname, 'database', 'sessions.json');
+const USERS_FILE = path.join(ROOT_DIR, 'database', 'users.json');
+const MESSAGES_FILE = path.join(ROOT_DIR, 'database', 'messages.json');
+const SESSIONS_FILE = path.join(ROOT_DIR, 'database', 'sessions.json');
 
-const store = {
+const store: Store = {
   users: {},
   messages: [],
   sessions: {}
 };
 
-let persistQueue = Promise.resolve();
+let persistQueue: Promise<void> = Promise.resolve();
 
-function persist(filePath, data) {
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error;
+}
+
+function persist(filePath: string, data: unknown): Promise<void> {
   persistQueue = persistQueue
     .then(() => fs.writeFile(filePath, JSON.stringify(data, null, 2)))
-    .catch((error) => console.error('Error persisting file:', error));
+    .catch((error: unknown) => console.error('Error persisting file:', error));
   return persistQueue;
 }
 
-async function readJSONFile(filePath, fallback) {
+async function readJSONFile<T>(filePath: string, fallback: T): Promise<T> {
   try {
     const data = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
+    return JSON.parse(data) as T;
+  } catch (error: unknown) {
+    if (!isErrnoException(error) || error.code !== 'ENOENT') {
       console.error('Error reading file:', error);
     }
     return fallback;
   }
 }
 
-async function initDatabase() {
-  const dbDir = path.join(__dirname, 'database');
+async function initDatabase(): Promise<void> {
+  const dbDir = path.join(ROOT_DIR, 'database');
   await fs.mkdir(dbDir, { recursive: true });
 
-  store.users = await readJSONFile(USERS_FILE, {});
-  store.messages = await readJSONFile(MESSAGES_FILE, []);
-  store.sessions = await readJSONFile(SESSIONS_FILE, {});
+  store.users = await readJSONFile<Store['users']>(USERS_FILE, {});
+  store.messages = await readJSONFile<ChatMessage[]>(MESSAGES_FILE, []);
+  store.sessions = await readJSONFile<Store['sessions']>(SESSIONS_FILE, {});
 
   if (typeof store.users !== 'object' || store.users === null || Array.isArray(store.users)) {
     store.users = {};
@@ -105,11 +122,11 @@ async function initDatabase() {
   }
 }
 
-function generateSessionToken() {
+function generateSessionToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-function sessionCookieOptions() {
+function sessionCookieOptions(): CookieOptions {
   return {
     httpOnly: true,
     sameSite: 'lax',
@@ -119,9 +136,9 @@ function sessionCookieOptions() {
   };
 }
 
-function getTokenFromRequest(req) {
+function getTokenFromRequest(req: Request): string | null {
   const cookieToken = req.cookies?.[COOKIE_NAME];
-  if (cookieToken) return cookieToken;
+  if (typeof cookieToken === 'string' && cookieToken) return cookieToken;
 
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) {
@@ -130,7 +147,7 @@ function getTokenFromRequest(req) {
   return null;
 }
 
-function getSession(token) {
+function getSession(token: string | null): SessionRecord | null {
   if (!token) return null;
 
   const session = store.sessions[token];
@@ -146,9 +163,9 @@ function getSession(token) {
   return session;
 }
 
-let sessionPersistTimer = null;
+let sessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleSessionPersist() {
+function scheduleSessionPersist(): void {
   if (sessionPersistTimer) return;
   sessionPersistTimer = setTimeout(() => {
     sessionPersistTimer = null;
@@ -156,12 +173,12 @@ function scheduleSessionPersist() {
   }, 5000);
 }
 
-function touchSession(token, session) {
+function touchSession(_token: string, session: SessionRecord): void {
   session.lastSeenAt = Date.now();
   scheduleSessionPersist();
 }
 
-function cleanupExpiredSessions() {
+function cleanupExpiredSessions(): void {
   const now = Date.now();
   let cleaned = false;
 
@@ -182,16 +199,18 @@ function cleanupExpiredSessions() {
 
 setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
 
-function authenticateUser(req, res, next) {
+function authenticateUser(req: Request, res: Response, next: NextFunction): void {
   const token = getTokenFromRequest(req);
   if (!token) {
-    return res.status(401).json({ error: 'No authentication token provided' });
+    res.status(401).json({ error: 'No authentication token provided' });
+    return;
   }
 
   const session = getSession(token);
   if (!session) {
     res.clearCookie(COOKIE_NAME, { path: '/' });
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    res.status(401).json({ error: 'Invalid or expired token' });
+    return;
   }
 
   touchSession(token, session);
@@ -201,7 +220,18 @@ function authenticateUser(req, res, next) {
   next();
 }
 
-function validateUsername(username) {
+function currentUser(req: Request): string {
+  if (!req.userId) {
+    throw new Error('Authenticated request is missing a user');
+  }
+  return req.userId;
+}
+
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+}
+
+function validateUsername(username: unknown): ValidationResult {
   if (!username || typeof username !== 'string') {
     return { valid: false, error: 'Username is required' };
   }
@@ -217,7 +247,7 @@ function validateUsername(username) {
   return { valid: true };
 }
 
-function validateLoginPassword(password) {
+function validateLoginPassword(password: unknown): ValidationResult {
   if (!password || typeof password !== 'string') {
     return { valid: false, error: 'Password is required' };
   }
@@ -229,7 +259,7 @@ function validateLoginPassword(password) {
   return { valid: true };
 }
 
-function validateSignupPassword(password) {
+function validateSignupPassword(password: unknown): ValidationResult {
   if (!password || typeof password !== 'string') {
     return { valid: false, error: 'Password is required' };
   }
@@ -249,7 +279,7 @@ function validateSignupPassword(password) {
   return { valid: true };
 }
 
-function validateMessage(content) {
+function validateMessage(content: unknown): ValidationResult {
   if (!content || typeof content !== 'string') {
     return { valid: false, error: 'Message content is required' };
   }
@@ -265,19 +295,19 @@ function validateMessage(content) {
   return { valid: true };
 }
 
-function sanitizeInput(input) {
+function sanitizeInput(input: unknown): unknown {
   if (typeof input !== 'string') return input;
   return input.trim();
 }
 
-function conversationFilter(userA, userB) {
+function conversationFilter(userA: string, userB: string): (msg: ChatMessage) => boolean {
   return (msg) =>
     (msg.sender === userA && msg.recipient === userB) ||
     (msg.sender === userB && msg.recipient === userA);
 }
 
-function lastMessageBetween(userA, userB) {
-  for (let i = store.messages.length - 1; i >= 0; i--) {
+function lastMessageBetween(userA: string, userB: string): ChatMessage | null {
+  for (let i = store.messages.length - 1; i >= 0; i -= 1) {
     if (conversationFilter(userA, userB)(store.messages[i])) {
       return store.messages[i];
     }
@@ -285,8 +315,8 @@ function lastMessageBetween(userA, userB) {
   return null;
 }
 
-function unreadCountsFor(username) {
-  const unreadBySender = {};
+function unreadCountsFor(username: string): Record<string, number> {
+  const unreadBySender: Record<string, number> = {};
   for (const msg of store.messages) {
     if (msg.recipient === username && !msg.read) {
       unreadBySender[msg.sender] = (unreadBySender[msg.sender] || 0) + 1;
@@ -295,22 +325,23 @@ function unreadCountsFor(username) {
   return unreadBySender;
 }
 
-function userSummariesFor(currentUser) {
-  const unread = unreadCountsFor(currentUser);
+function userSummariesFor(current: string): UserSummary[] {
+  const unread = unreadCountsFor(current);
   return Object.keys(store.users)
-    .filter((name) => name !== currentUser)
+    .filter((name) => name !== current)
     .map((name) => {
-      const lastMessage = lastMessageBetween(currentUser, name);
+      const lastMessage = lastMessageBetween(current, name);
+      const preview: LastMessagePreview | null = lastMessage
+        ? {
+            content: lastMessage.content,
+            timestamp: lastMessage.timestamp,
+            sender: lastMessage.sender
+          }
+        : null;
       return {
         username: name,
         unread: unread[name] || 0,
-        lastMessage: lastMessage
-          ? {
-              content: lastMessage.content,
-              timestamp: lastMessage.timestamp,
-              sender: lastMessage.sender
-            }
-          : null
+        lastMessage: preview
       };
     })
     .sort((a, b) => {
@@ -323,42 +354,51 @@ function userSummariesFor(currentUser) {
     });
 }
 
-const socketsByUser = new Map();
+type ChatSocket = WebSocket & { username?: string };
 
-function sendToUser(username, payload) {
+type SocketPayload =
+  | { type: 'presence'; online: string[] }
+  | { type: 'users_changed' }
+  | { type: 'message'; message: ChatMessage }
+  | { type: 'typing'; from: string }
+  | { type: 'unread'; unread: Record<string, number> };
+
+const socketsByUser = new Map<string, Set<ChatSocket>>();
+
+function sendToUser(username: string, payload: SocketPayload): void {
   const sockets = socketsByUser.get(username);
   if (!sockets) return;
 
   const data = JSON.stringify(payload);
   for (const ws of sockets) {
-    if (ws.readyState === 1) {
+    if (ws.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
   }
 }
 
-function broadcast(payload, exceptUsername) {
+function broadcast(payload: SocketPayload, exceptUsername?: string): void {
   const data = JSON.stringify(payload);
   for (const [username, sockets] of socketsByUser) {
     if (username === exceptUsername) continue;
     for (const ws of sockets) {
-      if (ws.readyState === 1) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(data);
       }
     }
   }
 }
 
-function onlineUsernames() {
+function onlineUsernames(): string[] {
   return [...socketsByUser.keys()];
 }
 
-function broadcastPresence() {
+function broadcastPresence(): void {
   broadcast({ type: 'presence', online: onlineUsernames() });
 }
 
-function parseCookies(header) {
-  const out = {};
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
   if (!header) return out;
 
   for (const part of header.split(';')) {
@@ -370,12 +410,12 @@ function parseCookies(header) {
   return out;
 }
 
-function getTokenFromUpgradeRequest(req) {
+function getTokenFromUpgradeRequest(req: IncomingMessage): string | null {
   const cookies = parseCookies(req.headers.cookie);
   if (cookies[COOKIE_NAME]) return cookies[COOKIE_NAME];
 
   try {
-    const url = new URL(req.url, 'http://localhost');
+    const url = new URL(req.url ?? '', 'http://localhost');
     return url.searchParams.get('token');
   } catch {
     return null;
@@ -384,28 +424,28 @@ function getTokenFromUpgradeRequest(req) {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', (socket: ChatSocket, req) => {
   const token = getTokenFromUpgradeRequest(req);
   const session = getSession(token);
 
   if (!session) {
-    ws.close(4401, 'Unauthorized');
+    socket.close(4401, 'Unauthorized');
     return;
   }
 
-  touchSession(token, session);
-  ws.username = session.username;
+  touchSession(token as string, session);
+  socket.username = session.username;
 
-  if (!socketsByUser.has(ws.username)) {
-    socketsByUser.set(ws.username, new Set());
+  if (!socketsByUser.has(socket.username)) {
+    socketsByUser.set(socket.username, new Set());
   }
-  socketsByUser.get(ws.username).add(ws);
+  socketsByUser.get(socket.username)?.add(socket);
   broadcastPresence();
 
-  ws.on('message', (raw) => {
-    let payload;
+  socket.on('message', (raw) => {
+    let payload: { type?: unknown; to?: unknown };
     try {
-      payload = JSON.parse(String(raw));
+      payload = JSON.parse(String(raw)) as { type?: unknown; to?: unknown };
     } catch {
       return;
     }
@@ -416,17 +456,19 @@ wss.on('connection', (ws, req) => {
     if (!toValidation.valid) return;
 
     const to = sanitizeInput(payload.to);
-    if (to === ws.username || !store.users[to]) return;
+    if (typeof to !== 'string' || to === socket.username || !store.users[to]) return;
 
-    sendToUser(to, { type: 'typing', from: ws.username });
+    if (!socket.username) return;
+    sendToUser(to, { type: 'typing', from: socket.username });
   });
 
-  ws.on('close', () => {
-    const sockets = socketsByUser.get(ws.username);
+  socket.on('close', () => {
+    if (!socket.username) return;
+    const sockets = socketsByUser.get(socket.username);
     if (!sockets) return;
-    sockets.delete(ws);
+    sockets.delete(socket);
     if (sockets.size === 0) {
-      socketsByUser.delete(ws.username);
+      socketsByUser.delete(socket.username);
     }
     broadcastPresence();
   });
@@ -434,33 +476,41 @@ wss.on('connection', (ws, req) => {
 
 app.post('/api/signup', authLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body as { username?: unknown; password?: unknown };
 
     const usernameValidation = validateUsername(username);
     if (!usernameValidation.valid) {
-      return res.status(400).json({ error: usernameValidation.error });
+      res.status(400).json({ error: usernameValidation.error });
+      return;
     }
 
     const passwordValidation = validateSignupPassword(password);
     if (!passwordValidation.valid) {
-      return res.status(400).json({ error: passwordValidation.error });
+      res.status(400).json({ error: passwordValidation.error });
+      return;
     }
 
     const sanitizedUsername = sanitizeInput(username);
+    if (typeof sanitizedUsername !== 'string') {
+      res.status(400).json({ error: 'Username is required' });
+      return;
+    }
     if (store.users[sanitizedUsername]) {
-      return res.status(400).json({ error: 'Username already exists' });
+      res.status(400).json({ error: 'Username already exists' });
+      return;
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    store.users[sanitizedUsername] = {
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    const record: UserRecord = {
       password: hashedPassword,
       createdAt: new Date().toISOString()
     };
+    store.users[sanitizedUsername] = record;
     await persist(USERS_FILE, store.users);
 
     broadcast({ type: 'users_changed' });
     res.json({ message: 'User created successfully' });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Signup error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -468,28 +518,36 @@ app.post('/api/signup', authLimiter, async (req, res) => {
 
 app.post('/api/login', authLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body as { username?: unknown; password?: unknown };
 
     const usernameValidation = validateUsername(username);
     if (!usernameValidation.valid) {
-      return res.status(400).json({ error: usernameValidation.error });
+      res.status(400).json({ error: usernameValidation.error });
+      return;
     }
 
     const passwordValidation = validateLoginPassword(password);
     if (!passwordValidation.valid) {
-      return res.status(400).json({ error: passwordValidation.error });
+      res.status(400).json({ error: passwordValidation.error });
+      return;
     }
 
     const sanitizedUsername = sanitizeInput(username);
+    if (typeof sanitizedUsername !== 'string') {
+      res.status(400).json({ error: 'Username is required' });
+      return;
+    }
     const user = store.users[sanitizedUsername];
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
     }
 
-    const isValidPassword = await bcrypt.compare(password, user.password);
+    const isValidPassword = await bcrypt.compare(String(password), user.password);
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
     }
 
     const token = generateSessionToken();
@@ -506,7 +564,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
       message: 'Login successful',
       username: sanitizedUsername
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -522,56 +580,67 @@ app.post('/api/logout', (req, res) => {
 
     res.clearCookie(COOKIE_NAME, { path: '/' });
     res.json({ message: 'Logout successful' });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Logout error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.get('/api/me', authenticateUser, (req, res) => {
-  const user = store.users[req.userId];
+  const userId = currentUser(req);
+  const user = store.users[userId];
   if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+    res.status(404).json({ error: 'User not found' });
+    return;
   }
 
-  res.json({ username: req.userId });
+  res.json({ username: userId });
 });
 
 app.get('/api/users', authenticateUser, (req, res) => {
   res.json({
-    users: userSummariesFor(req.userId),
+    users: userSummariesFor(currentUser(req)),
     online: onlineUsernames()
   });
 });
 
 app.post('/api/messages', authenticateUser, (req, res) => {
   try {
-    const { recipient, content } = req.body;
+    const userId = currentUser(req);
+    const { recipient, content } = req.body as { recipient?: unknown; content?: unknown };
 
     const recipientValidation = validateUsername(recipient);
     if (!recipientValidation.valid) {
-      return res.status(400).json({ error: recipientValidation.error });
+      res.status(400).json({ error: recipientValidation.error });
+      return;
     }
 
     const contentValidation = validateMessage(content);
     if (!contentValidation.valid) {
-      return res.status(400).json({ error: contentValidation.error });
+      res.status(400).json({ error: contentValidation.error });
+      return;
     }
 
     const sanitizedRecipient = sanitizeInput(recipient);
     const sanitizedContent = sanitizeInput(content);
+    if (typeof sanitizedRecipient !== 'string' || typeof sanitizedContent !== 'string') {
+      res.status(400).json({ error: 'Invalid message' });
+      return;
+    }
 
-    if (sanitizedRecipient === req.userId) {
-      return res.status(400).json({ error: 'Cannot send message to yourself' });
+    if (sanitizedRecipient === userId) {
+      res.status(400).json({ error: 'Cannot send message to yourself' });
+      return;
     }
 
     if (!store.users[sanitizedRecipient]) {
-      return res.status(404).json({ error: 'Recipient not found' });
+      res.status(404).json({ error: 'Recipient not found' });
+      return;
     }
 
-    const newMessage = {
+    const newMessage: ChatMessage = {
       id: crypto.randomUUID(),
-      sender: req.userId,
+      sender: userId,
       recipient: sanitizedRecipient,
       content: sanitizedContent,
       timestamp: new Date().toISOString(),
@@ -581,11 +650,11 @@ app.post('/api/messages', authenticateUser, (req, res) => {
     store.messages.push(newMessage);
     persist(MESSAGES_FILE, store.messages);
 
-    sendToUser(req.userId, { type: 'message', message: newMessage });
+    sendToUser(userId, { type: 'message', message: newMessage });
     sendToUser(sanitizedRecipient, { type: 'message', message: newMessage });
 
     res.json({ data: newMessage });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Send message error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -593,15 +662,16 @@ app.post('/api/messages', authenticateUser, (req, res) => {
 
 app.get('/api/messages/:username', authenticateUser, (req, res) => {
   try {
-    const { username } = req.params;
+    const username = routeParam(req.params.username);
     const usernameValidation = validateUsername(username);
     if (!usernameValidation.valid) {
-      return res.status(400).json({ error: usernameValidation.error });
+      res.status(400).json({ error: usernameValidation.error });
+      return;
     }
 
-    const conversation = store.messages.filter(conversationFilter(req.userId, username));
+    const conversation = store.messages.filter(conversationFilter(currentUser(req), username));
     res.json({ messages: conversation });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Get messages error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -609,15 +679,17 @@ app.get('/api/messages/:username', authenticateUser, (req, res) => {
 
 app.post('/api/messages/:username/read', authenticateUser, (req, res) => {
   try {
-    const { username } = req.params;
+    const username = routeParam(req.params.username);
     const usernameValidation = validateUsername(username);
     if (!usernameValidation.valid) {
-      return res.status(400).json({ error: usernameValidation.error });
+      res.status(400).json({ error: usernameValidation.error });
+      return;
     }
 
+    const userId = currentUser(req);
     let marked = 0;
     for (const msg of store.messages) {
-      if (msg.recipient === req.userId && msg.sender === username && !msg.read) {
+      if (msg.recipient === userId && msg.sender === username && !msg.read) {
         msg.read = true;
         marked += 1;
       }
@@ -625,18 +697,18 @@ app.post('/api/messages/:username/read', authenticateUser, (req, res) => {
 
     if (marked > 0) {
       persist(MESSAGES_FILE, store.messages);
-      sendToUser(req.userId, { type: 'unread', unread: unreadCountsFor(req.userId) });
+      sendToUser(userId, { type: 'unread', unread: unreadCountsFor(userId) });
     }
 
     res.json({ marked });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Mark read error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.get('/api/unread', authenticateUser, (req, res) => {
-  res.json({ unread: unreadCountsFor(req.userId) });
+  res.json({ unread: unreadCountsFor(currentUser(req)) });
 });
 
 initDatabase()
@@ -645,7 +717,7 @@ initDatabase()
       console.log(`Server running on http://localhost:${PORT}`);
     });
   })
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error('Failed to start server:', error);
     process.exit(1);
   });

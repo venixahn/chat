@@ -1,5 +1,8 @@
 node_modules/
 database/
+dist/
+public/auth.js
+public/chat.js
 *.log
 .DS_Store
 .env

@@ -1,25 +1,38 @@
 const API_URL = '/api';
 
-// DOM elements
-const loginForm = document.getElementById('login-form');
-const signupForm = document.getElementById('signup-form');
-const tabBtns = document.querySelectorAll('.tab-btn');
-const loginError = document.getElementById('login-error');
-const signupError = document.getElementById('signup-error');
-const signupPassword = document.getElementById('signup-password');
-const signupConfirmPassword = document.getElementById('signup-confirm-password');
-const generatePasswordBtn = document.getElementById('generate-password');
-const signupUsername = document.getElementById('signup-username');
-const loginUsername = document.getElementById('login-username');
-const strengthBar = document.querySelector('.strength-bar');
-const strengthText = document.querySelector('.strength-text');
-const loginSubmit = document.getElementById('login-submit');
-const signupSubmit = document.getElementById('signup-submit');
+type ValidationResult =
+  | { valid: true }
+  | { valid: false; error: string };
 
-document.querySelectorAll('.toggle-password').forEach((button) => {
+function requireElement<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) {
+    throw new Error(`Missing #${id}`);
+  }
+  return el as T;
+}
+
+const loginForm = requireElement<HTMLFormElement>('login-form');
+const signupForm = requireElement<HTMLFormElement>('signup-form');
+const tabBtns = document.querySelectorAll<HTMLButtonElement>('.tab-btn');
+const loginError = requireElement<HTMLElement>('login-error');
+const signupError = requireElement<HTMLElement>('signup-error');
+const signupPassword = requireElement<HTMLInputElement>('signup-password');
+const signupConfirmPassword = requireElement<HTMLInputElement>('signup-confirm-password');
+const generatePasswordBtn = document.getElementById('generate-password');
+const signupUsername = requireElement<HTMLInputElement>('signup-username');
+const loginUsername = requireElement<HTMLInputElement>('login-username');
+const strengthBar = document.querySelector<HTMLElement>('.strength-bar');
+const strengthText = document.querySelector<HTMLElement>('.strength-text');
+const loginSubmit = requireElement<HTMLButtonElement>('login-submit');
+const signupSubmit = requireElement<HTMLButtonElement>('signup-submit');
+
+document.querySelectorAll<HTMLButtonElement>('.toggle-password').forEach((button) => {
   button.addEventListener('click', () => {
-    const input = document.getElementById(button.dataset.target);
-    if (!input) return;
+    const targetId = button.dataset.target;
+    if (!targetId) return;
+    const input = document.getElementById(targetId);
+    if (!(input instanceof HTMLInputElement)) return;
     const hidden = input.type === 'password';
     input.type = hidden ? 'text' : 'password';
     button.textContent = hidden ? 'Hide' : 'Show';
@@ -27,7 +40,7 @@ document.querySelectorAll('.toggle-password').forEach((button) => {
   });
 });
 
-function showLoginTab(successMessage) {
+function showLoginTab(successMessage?: string): void {
   tabBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'login'));
   loginForm.classList.remove('hidden');
   signupForm.classList.add('hidden');
@@ -45,16 +58,13 @@ function showLoginTab(successMessage) {
   }
 }
 
-// Tab switching
-tabBtns.forEach(btn => {
+tabBtns.forEach((btn) => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
-    
-    // Update active tab
-    tabBtns.forEach(b => b.classList.remove('active'));
+
+    tabBtns.forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    
-    // Show/hide forms
+
     if (tab === 'login') {
       loginForm.classList.remove('hidden');
       signupForm.classList.add('hidden');
@@ -72,13 +82,12 @@ tabBtns.forEach(btn => {
   });
 });
 
-// Login form submission
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  
-  const username = document.getElementById('login-username').value;
-  const password = document.getElementById('login-password').value;
-  
+
+  const username = loginUsername.value;
+  const password = requireElement<HTMLInputElement>('login-password').value;
+
   const usernameValidation = validateUsername(username);
   if (!usernameValidation.valid) {
     loginError.textContent = usernameValidation.error;
@@ -89,7 +98,7 @@ loginForm.addEventListener('submit', async (e) => {
     loginError.textContent = 'Password is required';
     return;
   }
-  
+
   loginSubmit.disabled = true;
   loginSubmit.textContent = 'Logging in…';
 
@@ -102,19 +111,19 @@ loginForm.addEventListener('submit', async (e) => {
       },
       body: JSON.stringify({ username, password })
     });
-    
-    const data = await response.json();
-    
+
+    const data = await response.json() as { username?: string; error?: string };
+
     if (response.ok) {
       localStorage.removeItem('token');
-      localStorage.setItem('username', data.username);
+      localStorage.setItem('username', data.username ?? username);
       window.location.href = '/chat.html';
     } else {
       loginError.classList.remove('success');
       loginError.classList.add('error');
       loginError.textContent = data.error || 'Login failed';
     }
-  } catch (error) {
+  } catch (error: unknown) {
     loginError.classList.remove('success');
     loginError.classList.add('error');
     loginError.textContent = 'Network error. Please try again.';
@@ -125,33 +134,30 @@ loginForm.addEventListener('submit', async (e) => {
   }
 });
 
-// Signup form submission
 signupForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  
-  const username = document.getElementById('signup-username').value;
-  const password = document.getElementById('signup-password').value;
-  const confirmPassword = document.getElementById('signup-confirm-password').value;
-  
-  // Client-side validation
+
+  const username = signupUsername.value;
+  const password = signupPassword.value;
+  const confirmPassword = signupConfirmPassword.value;
+
   const usernameValidation = validateUsername(username);
   if (!usernameValidation.valid) {
     signupError.textContent = usernameValidation.error;
     return;
   }
-  
+
   const passwordValidation = validateSignupPassword(password);
   if (!passwordValidation.valid) {
     signupError.textContent = passwordValidation.error;
     return;
   }
-  
-  // Validate passwords match
+
   if (password !== confirmPassword) {
     signupError.textContent = 'Passwords do not match';
     return;
   }
-  
+
   signupSubmit.disabled = true;
   signupSubmit.textContent = 'Creating account…';
 
@@ -164,21 +170,21 @@ signupForm.addEventListener('submit', async (e) => {
       },
       body: JSON.stringify({ username, password })
     });
-    
-    const data = await response.json();
-    
+
+    const data = await response.json() as { error?: string };
+
     if (response.ok) {
-      document.getElementById('signup-username').value = '';
-      document.getElementById('signup-password').value = '';
-      document.getElementById('signup-confirm-password').value = '';
-      document.getElementById('login-username').value = username;
+      signupUsername.value = '';
+      signupPassword.value = '';
+      signupConfirmPassword.value = '';
+      loginUsername.value = username;
       showLoginTab('Account created. Log in to start chatting.');
     } else {
       signupError.classList.remove('success');
       signupError.classList.add('error');
       signupError.textContent = data.error || 'Signup failed';
     }
-  } catch (error) {
+  } catch (error: unknown) {
     signupError.classList.remove('success');
     signupError.classList.add('error');
     signupError.textContent = 'Network error. Please try again.';
@@ -189,12 +195,11 @@ signupForm.addEventListener('submit', async (e) => {
   }
 });
 
-// Password strength checker
-function randomIndex(max, value) {
+function randomIndex(max: number, value: number): number {
   return value % max;
 }
 
-function generatePassword() {
+function generatePassword(): string {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const lower = 'abcdefghijkmnopqrstuvwxyz';
   const digits = '23456789';
@@ -224,10 +229,10 @@ function generatePassword() {
   return chars.join('');
 }
 
-function setPasswordVisibility(inputId, visible) {
+function setPasswordVisibility(inputId: string, visible: boolean): void {
   const input = document.getElementById(inputId);
-  const button = document.querySelector(`.toggle-password[data-target="${inputId}"]`);
-  if (!input) return;
+  const button = document.querySelector<HTMLButtonElement>(`.toggle-password[data-target="${inputId}"]`);
+  if (!(input instanceof HTMLInputElement)) return;
   input.type = visible ? 'text' : 'password';
   if (button) {
     button.textContent = visible ? 'Hide' : 'Show';
@@ -235,7 +240,9 @@ function setPasswordVisibility(inputId, visible) {
   }
 }
 
-function updatePasswordStrength() {
+function updatePasswordStrength(): void {
+  if (!strengthBar || !strengthText) return;
+
   const password = signupPassword.value;
   const strength = checkPasswordStrength(password);
 
@@ -264,13 +271,13 @@ function updatePasswordStrength() {
   }
 }
 
-async function copyGeneratedPassword(password) {
+async function copyGeneratedPassword(password: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(password);
     signupError.classList.remove('error');
     signupError.classList.add('success');
     signupError.textContent = 'Password generated and copied. Save it before you continue.';
-  } catch (error) {
+  } catch {
     signupError.classList.remove('error');
     signupError.classList.add('success');
     signupError.textContent = 'Password generated. Copy it now — it will be hidden if you leave this page.';
@@ -291,33 +298,32 @@ if (generatePasswordBtn) {
   });
 }
 
-function checkPasswordStrength(password) {
+function checkPasswordStrength(password: string): number {
   let strength = 0;
-  
+
   if (password.length >= 8) strength += 1;
   if (password.length >= 12) strength += 1;
   if (/[A-Z]/.test(password)) strength += 1;
   if (/[a-z]/.test(password)) strength += 1;
   if (/[0-9]/.test(password)) strength += 1;
   if (/[^A-Za-z0-9]/.test(password)) strength += 1;
-  
+
   return strength;
 }
 
-// Client-side validation functions
-function validateUsername(username) {
+function validateUsername(username: string): ValidationResult {
   if (!username || username.length < 3 || username.length > 20) {
     return { valid: false, error: 'Username must be between 3 and 20 characters' };
   }
-  
+
   if (!/^[a-zA-Z0-9_]+$/.test(username)) {
     return { valid: false, error: 'Username can only contain letters, numbers, and underscores' };
   }
-  
+
   return { valid: true };
 }
 
-function validateSignupPassword(password) {
+function validateSignupPassword(password: string): ValidationResult {
   if (!password || password.length < 8) {
     return { valid: false, error: 'Password must be at least 8 characters' };
   }
@@ -335,11 +341,10 @@ function validateSignupPassword(password) {
 
 signupPassword.addEventListener('input', updatePasswordStrength);
 
-// Real-time username validation
 signupUsername.addEventListener('input', () => {
   const username = signupUsername.value;
   const validation = validateUsername(username);
-  
+
   if (username.length > 0 && !validation.valid) {
     signupUsername.style.borderColor = '#e74c3c';
   } else {
@@ -347,7 +352,6 @@ signupUsername.addEventListener('input', () => {
   }
 });
 
-// Clear validation styles on focus
 signupUsername.addEventListener('focus', () => {
   signupUsername.style.borderColor = '#667eea';
 });
@@ -355,13 +359,15 @@ signupUsername.addEventListener('focus', () => {
 signupUsername.addEventListener('blur', () => {
   const username = signupUsername.value;
   const validation = validateUsername(username);
-  
+
   if (username.length > 0 && !validation.valid) {
     signupUsername.style.borderColor = '#e74c3c';
   } else {
     signupUsername.style.borderColor = '#e0e0e0';
   }
 });
+
+export {};
 
 window.addEventListener('load', async () => {
   try {
@@ -372,7 +378,7 @@ window.addEventListener('load', async () => {
     if (response.ok) {
       window.location.href = '/chat.html';
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Session check error:', error);
   }
 });
