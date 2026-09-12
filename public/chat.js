@@ -16,6 +16,7 @@ let currentChatUser = null;
 let token = localStorage.getItem('token');
 let username = localStorage.getItem('username');
 let pollInterval = null;
+let sessionCheckInterval = null;
 
 // Check authentication
 if (!token) {
@@ -270,13 +271,51 @@ function startPolling() {
   }, 3000);
 }
 
+// Check session validity
+async function checkSession() {
+  try {
+    const response = await fetch(`${API_URL}/me`, {
+      headers: getAuthHeaders()
+    });
+    
+    if (!response.ok) {
+      // Session expired, logout user
+      handleSessionExpiry();
+    }
+  } catch (error) {
+    console.error('Session check error:', error);
+  }
+}
+
+// Handle session expiry
+function handleSessionExpiry() {
+  clearInterval(pollInterval);
+  clearInterval(sessionCheckInterval);
+  
+  localStorage.removeItem('token');
+  localStorage.removeItem('username');
+  
+  alert('Your session has expired. Please login again.');
+  window.location.href = '/index.html';
+}
+
+// Start session checking
+function startSessionCheck() {
+  // Check session every minute
+  sessionCheckInterval = setInterval(checkSession, 60 * 1000);
+}
+
 // Initialize
 loadUsers();
 startPolling();
+startSessionCheck();
 
 // Clean up on page unload
 window.addEventListener('beforeunload', () => {
   if (pollInterval) {
     clearInterval(pollInterval);
+  }
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval);
   }
 });

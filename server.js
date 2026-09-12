@@ -6,6 +6,7 @@ const path = require('path');
 
 const app = express();
 const PORT = 3000;
+const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 // Middleware
 app.use(cors({
@@ -78,6 +79,34 @@ function generateSessionToken() {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
+// Clean up expired sessions
+async function cleanupExpiredSessions() {
+  try {
+    const sessions = await readJSONFile(SESSIONS_FILE);
+    if (!sessions) return;
+    
+    const now = Date.now();
+    let cleaned = false;
+    
+    for (const token in sessions) {
+      if (sessions[token].createdAt && (now - sessions[token].createdAt > SESSION_TIMEOUT)) {
+        delete sessions[token];
+        cleaned = true;
+      }
+    }
+    
+    if (cleaned) {
+      await writeJSONFile(SESSIONS_FILE, sessions);
+      console.log('Cleaned up expired sessions');
+    }
+  } catch (error) {
+    console.error('Error cleaning up sessions:', error);
+  }
+}
+
+// Run session cleanup every 5 minutes
+setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+
 // Middleware to check authentication
 async function authenticateUser(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -91,7 +120,15 @@ async function authenticateUser(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   
-  req.userId = sessions[token];
+  // Check session timeout
+  const session = sessions[token];
+  if (session.createdAt && (Date.now() - session.createdAt > SESSION_TIMEOUT)) {
+    delete sessions[token];
+    await writeJSONFile(SESSIONS_FILE, sessions);
+    return res.status(401).json({ error: 'Session expired. Please login again.' });
+  }
+  
+  req.userId = session.username;
   next();
 }
 
@@ -151,7 +188,10 @@ app.post('/api/login', async (req, res) => {
     // Create session
     const token = generateSessionToken();
     const sessions = await readJSONFile(SESSIONS_FILE);
-    sessions[token] = username;
+    sessions[token] = {
+      username,
+      createdAt: Date.now()
+    };
     await writeJSONFile(SESSIONS_FILE, sessions);
     
     res.json({ 
