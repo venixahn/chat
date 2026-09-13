@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="auth-form">
+            <h1>Chat App</h1>
+            
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="login">Login</button>
+                <button class="tab-btn" data-tab="signup">Sign Up</button>
+            </div>
+            
+            <form id="login-form" class="auth-form-content">
+                <div class="form-group">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <div class="password-field">
+                        <input type="password" id="login-password" autocomplete="current-password" required>
+                        <button type="button" class="toggle-password" data-target="login-password" aria-label="Show password">Show</button>
+                    </div>
+                </div>
+                <button type="submit" class="btn" id="login-submit">Login</button>
+                <p id="login-error" class="error"></p>
+            </form>
+            
+            <form id="signup-form" class="auth-form-content hidden">
+                <div class="form-group">
+                    <label for="signup-username">Username</label>
+                    <input type="text" id="signup-username" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <div class="form-group-label">
+                        <label for="signup-password">Password</label>
+                        <button type="button" id="generate-password" class="text-btn">Generate password</button>
+                    </div>
+                    <div class="password-field">
+                        <input type="password" id="signup-password" autocomplete="new-password" required minlength="8">
+                        <button type="button" class="toggle-password" data-target="signup-password" aria-label="Show password">Show</button>
+                    </div>
+                    <div class="password-strength">
+                        <div class="strength-meter">
+                            <div class="strength-bar"></div>
+                        </div>
+                        <span class="strength-text">Use 8+ characters with a letter and a number</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="signup-confirm-password">Confirm Password</label>
+                    <div class="password-field">
+                        <input type="password" id="signup-confirm-password" autocomplete="new-password" required minlength="8">
+                        <button type="button" class="toggle-password" data-target="signup-confirm-password" aria-label="Show password">Show</button>
+                    </div>
+                </div>
+                <button type="submit" class="btn" id="signup-submit">Sign Up</button>
+                <p id="signup-error" class="error"></p>
+            </form>
+        </div>
+    </div>
+    
+    <script type="module" src="./auth.ts"></script>
+</body>
+</html>
